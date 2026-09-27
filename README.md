@@ -36,6 +36,19 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 
 Boleta visual (`TradeAssistant_BR.mq5`, Expert Advisor) com caixas de Risco/Gain arrastáveis.
 
+## Novidades da versão 1.70
+
+- **Recálculo em tempo real ao arrastar as linhas**: Lote, Gain, Stop e R:R são atualizados *durante* o arrasto (o MT5 só avisa ao soltar; agora o EA lê as linhas a cada 200 ms e no movimento do mouse).
+  - Com relação fixa (1:1, 2:1, 3:1) o TP acompanha a entrada/stop; arrastar o TP muda para **Livre**.
+- **Painel com valores reais do trade**: sem linhas ativas, o bloco GAIN/STOP mostra o trade aberto/pendente (lote, SL e TP da corretora + L&P), e não mais a última prévia.
+- **Clique na caixa de Risco/Gain** (depois de enviada) para mostrar/esconder os dados no estilo TradingView:
+  - `Objetivo: distância (%) pts, Valor` (verde) · `Aberto L&P ..., Qtde` + `Razão risco/retorno` · `Stop: distância (%) pts, Valor` (vermelho).
+  - Entrada `Dados Sempre Visíveis` para deixar sempre à mostra.
+- A prévia das linhas usa os mesmos badges.
+- Cálculo de dinheiro com plano B pelo valor do tick (corretoras de cripto/índices); lote aceita qualquer passo de volume.
+- Lote digitado à mão é respeitado até clicar em **Calc** ou mudar o risco.
+- Botões COMPRAR/VENDER a mercado colocam SL/TP sempre do lado certo.
+
 ## Novidades da versão 1.60
 
 - **Caixa de Risco/Gain continua no gráfico depois que a ordem é enviada** (igual à ferramenta de posição do TradingView):

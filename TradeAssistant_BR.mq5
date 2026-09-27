@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Trade Assistant MT5 - Edição em Português"
 #property link        "https://www.mql5.com"
-#property version     "1.60"
+#property version     "1.70"
 #property description "Boleta com cálculo dinâmico visível nas linhas e painel: Risco, Gain e R:R (tipo 3:1)."
 #property description "Gráfico inicia limpo. Criação de linhas sob demanda com arrasto 100% livre."
 #property description "Envio ao desmarcar as linhas ou ao clicar em Enviar Ordem."
@@ -41,9 +41,9 @@ enum ENUM_RR_RATIO
 input group "=== Cores das Caixas e Linhas ==="
 input color          InpColorGainBox       = C'206,235,230';      // Caixa de Ganho (Verde TradingView)
 input color          InpColorRiskBox       = C'252,215,218';      // Caixa de Risco (Rosa TradingView)
-input color          InpColorBadgeTP       = C'0,153,0';          // Badge Take Profit (Verde Sólido)
-input color          InpColorBadgeEntry    = C'0,153,0';          // Badge Entrada (Verde Sólido)
-input color          InpColorBadgeSL       = C'0,153,0';          // Badge Stop Loss (Verde Sólido)
+input color          InpColorBadgeTP       = C'8,153,129';        // Badge Objetivo/TP (Verde TradingView)
+input color          InpColorBadgeEntry    = C'8,153,129';        // Badge Entrada (Verde TradingView)
+input color          InpColorBadgeSL       = C'242,54,69';        // Badge Stop (Vermelho TradingView)
 input color          InpColorLineTP        = C'235,70,50';        // Linha Take Profit (Vermelha)
 input color          InpColorLineEntry     = C'40,180,40';        // Linha Entrada (Verde)
 input color          InpColorLineSL        = C'235,70,50';        // Linha Stop Loss (Vermelha)
@@ -68,6 +68,7 @@ input color          InpColorGainActive    = C'156,214,205';      // Trade no Lu
 input color          InpColorRiskActive    = C'250,175,181';      // Trade no Prejuízo (Rosa Mais Forte)
 input color          InpColorTrackEntry    = C'120,123,134';      // Linha de Entrada da Caixa (Cinza)
 input bool           InpKeepClosedTrades   = true;                // Manter Caixa Congelada Após Fechar
+input bool           InpShowInfoAlways     = false;               // Dados Sempre Visíveis (senão: clique na caixa)
 
 //--- Nomes dos Objetos no Gráfico
 #define PREFIX_GUI       "TABR_GUI_"
@@ -103,7 +104,10 @@ struct TradeTrack
    double   cur_price;
    double   close_price;
    double   result_money;
+   double   volume;
+   bool     show_info;
    datetime t_start;
+   datetime t_end;
    datetime t_fill;
    datetime t_close;
    int      state;
@@ -138,6 +142,11 @@ bool           g_is_dragging        = false;
 bool           g_line_was_moved     = false;
 bool           g_lines_were_selected = false;
 
+// Lote digitado manualmente (não é recalculado pelo risco até clicar em Calc)
+bool           g_manual_lot         = false;
+double         g_lot_shown          = -1.0;
+int            g_timer_ticks        = 0;
+
 // Coordenadas e Dimensões da Boleta
 int            g_panel_x            = 15;
 int            g_panel_y            = 35;
@@ -156,13 +165,23 @@ void UpdateChartVisuals(string dragging_object="");
 void RecalculateRiskAndLot();
 void CheckUnselectAndOrder();
 void SendConfiguredOrder();
+void SetMarketLevels(ENUM_TRADE_DIR dir);
 void MoveToBreakeven();
 void CloseHalfPositions();
 void CloseAllPositions();
 double NormalizePrice(double price);
 double NormalizeLot(double lot);
+double CalcMoney(bool is_buy, double lot, double price_open, double price_close);
+int PlaceBadge(string name, string text, color bg, int x_center, int y, bool visible);
+string TvLevelText(string title, double entry, double level, double money);
+void DrawInfoBadges(string n_tp, string n_mid, string n_sl, int x_center, bool is_buy,
+                    double entry, double sl, double tp, double lot,
+                    int state, double cur_price, double pl_money, bool hide);
+void DrawAllTracks();
+bool ToggleTrackInfoAt(int x, int y);
+bool SyncLinesFromChart();
 void AddTrack(ulong order_ticket, ulong pos_id, bool is_buy, double entry, double sl, double tp,
-              datetime t_start, datetime t_fill, int state);
+              datetime t_start, datetime t_fill, int state, double volume);
 void RebuildTracksFromTrade();
 void UpdateTrackers();
 void DeleteTrackObjects(const TradeTrack &t);
@@ -206,7 +225,9 @@ int OnInit()
    RebuildTracksFromTrade();
    UpdateTrackers();
 
-   EventSetTimer(1);
+   // Timer rápido (200 ms) para recalcular Gain/Stop/Lote enquanto as linhas são arrastadas
+   ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);
+   EventSetMillisecondTimer(200);
    ChartRedraw();
 
    return(INIT_SUCCEEDED);
@@ -250,13 +271,20 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   // Linha sendo arrastada: recalcula tudo na hora
+   if(g_lines_active && SyncLinesFromChart())
+      return;
+   g_is_dragging = false;
+
+   // Demais atualizações a cada ~1 segundo
+   g_timer_ticks++;
+   if(g_timer_ticks % 5 != 0) return;
+
    UpdatePanelInfo();
    UpdateTrackers();
-   ChartRedraw();
-   if(g_lines_active && g_auto_send && !g_is_dragging)
-   {
+   if(g_lines_active && g_auto_send)
       CheckUnselectAndOrder();
-   }
+   ChartRedraw();
 }
 
 //+------------------------------------------------------------------+
@@ -270,15 +298,18 @@ double NormalizeLot(double lot)
 
    if(step_lot <= 0) step_lot = 0.01;
 
-   lot = MathFloor(lot / step_lot) * step_lot;
+   lot = MathFloor(lot / step_lot + 1e-8) * step_lot;
 
    if(lot < min_lot) lot = min_lot;
    if(lot > max_lot) lot = max_lot;
 
    int step_digits = 0;
-   if(step_lot == 0.1) step_digits = 1;
-   else if(step_lot == 0.01) step_digits = 2;
-   else if(step_lot == 0.001) step_digits = 3;
+   double tmp_step = step_lot;
+   while(step_digits < 8 && MathAbs(tmp_step - MathRound(tmp_step)) > 1e-8)
+   {
+      tmp_step *= 10.0;
+      step_digits++;
+   }
 
    return NormalizeDouble(lot, step_digits);
 }
@@ -296,14 +327,48 @@ double NormalizePrice(double price)
 }
 
 //+------------------------------------------------------------------+
+//| Valor monetário (na moeda da conta) de ir de price_open a        |
+//| price_close com o lote informado. Positivo = lucro.              |
+//+------------------------------------------------------------------+
+double CalcMoney(bool is_buy, double lot, double price_open, double price_close)
+{
+   if(lot <= 0 || price_open <= 0 || price_close <= 0) return 0.0;
+
+   double money = 0.0;
+   ENUM_ORDER_TYPE type = is_buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   if(OrderCalcProfit(type, _Symbol, lot, price_open, price_close, money) && money != 0.0)
+      return money;
+
+   // Plano B: pelo valor do tick (algumas corretoras de cripto/índices falham no OrderCalcProfit)
+   double diff = is_buy ? (price_close - price_open) : (price_open - price_close);
+   double tick_size  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = (diff >= 0) ? SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE_PROFIT)
+                                   : SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(tick_value <= 0) tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tick_size <= 0 || tick_value <= 0) return 0.0;
+
+   return (diff / tick_size) * tick_value * lot;
+}
+
+//+------------------------------------------------------------------+
 //| Recalcula o lote rigorosamente pelo % de risco informado         |
+//| (se o lote foi digitado à mão, mantém o lote e só recalcula      |
+//|  Stop/Gain em dinheiro no painel)                                |
 //+------------------------------------------------------------------+
 void RecalculateRiskAndLot()
 {
+   // Identifica direção automaticamente de acordo com o posicionamento do SL
+   if(g_sl_price < g_entry_price)
+      g_dir = DIR_BUY;
+   else if(g_sl_price > g_entry_price)
+      g_dir = DIR_SELL;
+
+   if(g_manual_lot) return;
+
    double sl_distance = MathAbs(g_entry_price - g_sl_price);
    if(sl_distance <= 0)
    {
-      g_calc_lot = InpFixedLot;
+      g_calc_lot = NormalizeLot(InpFixedLot);
       return;
    }
 
@@ -321,29 +386,66 @@ void RecalculateRiskAndLot()
 
    if(risk_money <= 0) risk_money = 10.0;
 
-   // Identifica direção automaticamente de acordo com o posicionamento do SL
-   if(g_sl_price < g_entry_price)
-      g_dir = DIR_BUY;
-   else if(g_sl_price > g_entry_price)
-      g_dir = DIR_SELL;
-
-   ENUM_ORDER_TYPE order_type = (g_dir == DIR_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   double loss_per_1_lot = 0.0;
-
-   if(!OrderCalcProfit(order_type, _Symbol, 1.0, g_entry_price, g_sl_price, loss_per_1_lot) || MathAbs(loss_per_1_lot) <= 0.0)
+   double loss_per_1_lot = MathAbs(CalcMoney(g_dir == DIR_BUY, 1.0, g_entry_price, g_sl_price));
+   if(loss_per_1_lot <= 0.0)
    {
-      double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-      double tick_size  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-      if(tick_size > 0 && tick_value > 0)
-         loss_per_1_lot = (sl_distance / tick_size) * tick_value;
-      else
-         loss_per_1_lot = 1.0;
+      g_calc_lot = NormalizeLot(InpFixedLot);
+      return;
    }
 
-   loss_per_1_lot = MathAbs(loss_per_1_lot);
+   g_calc_lot = NormalizeLot(risk_money / loss_per_1_lot);
+}
 
-   double raw_lot = risk_money / loss_per_1_lot;
-   g_calc_lot = NormalizeLot(raw_lot);
+//+------------------------------------------------------------------+
+//| Lê a posição atual das linhas no gráfico (inclusive DURANTE o    |
+//| arrasto) e recalcula Lote, Gain, Stop e R:R na hora.             |
+//| Retorna true se alguma linha mudou.                              |
+//+------------------------------------------------------------------+
+bool SyncLinesFromChart()
+{
+   if(!g_lines_active) return false;
+   if(ObjectFind(0, OBJ_LINE_ENT) < 0 || ObjectFind(0, OBJ_LINE_SL) < 0 || ObjectFind(0, OBJ_LINE_TP) < 0)
+      return false;
+
+   double tick = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tick <= 0) tick = _Point;
+
+   double ent = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_ENT, OBJPROP_PRICE));
+   double sl  = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_SL,  OBJPROP_PRICE));
+   double tp  = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_TP,  OBJPROP_PRICE));
+
+   bool ent_moved = MathAbs(ent - g_entry_price) >= tick * 0.5;
+   bool sl_moved  = MathAbs(sl  - g_sl_price)    >= tick * 0.5;
+   bool tp_moved  = MathAbs(tp  - g_tp_price)    >= tick * 0.5;
+
+   if(!ent_moved && !sl_moved && !tp_moved) return false;
+
+   string moving = "";
+   if(ent_moved) { g_entry_price = ent; moving = OBJ_LINE_ENT; }
+   if(sl_moved)  { g_sl_price    = sl;  moving = OBJ_LINE_SL;  }
+   if(tp_moved)  { g_tp_price    = tp;  moving = OBJ_LINE_TP;  }
+
+   if(tp_moved)
+   {
+      // Ajuste manual do alvo: relação passa a ser livre
+      g_rr_ratio = RR_FREE;
+   }
+   else if(g_rr_ratio != RR_FREE)
+   {
+      // Relação fixa (1:1, 2:1, 3:1): o alvo acompanha a entrada/stop
+      double mult = (g_rr_ratio == RR_1_1) ? 1.0 : (g_rr_ratio == RR_2_1) ? 2.0 : 3.0;
+      double dist = MathAbs(g_entry_price - g_sl_price);
+      if(g_sl_price < g_entry_price) g_tp_price = NormalizePrice(g_entry_price + dist * mult);
+      else if(g_sl_price > g_entry_price) g_tp_price = NormalizePrice(g_entry_price - dist * mult);
+   }
+
+   g_line_was_moved = true;
+   g_is_dragging    = true;
+   RecalculateRiskAndLot();
+   UpdateChartVisuals(moving);
+   UpdatePanelInfo();
+   ChartRedraw();
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -460,45 +562,7 @@ void CreateChartVisualLines()
       ObjectSetInteger(0, OBJ_TXT_SL, OBJPROP_ZORDER, 5);
    }
 
-   // 7. Badges Sólidos Verdes (Idênticos ao Trade Assistant MT5)
-   if(ObjectFind(0, OBJ_BADGE_TP) < 0)
-   {
-      ObjectCreate(0, OBJ_BADGE_TP, OBJ_BUTTON, 0, 0, 0);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_BGCOLOR, InpColorBadgeTP);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_COLOR, clrWhite);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_FONTSIZE, 9);
-      ObjectSetString(0, OBJ_BADGE_TP, OBJPROP_FONT, "Segoe UI Bold");
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_BACK, false);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_ZORDER, 15);
-      ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_SELECTABLE, false);
-   }
-
-   if(ObjectFind(0, OBJ_BADGE_ENT) < 0)
-   {
-      ObjectCreate(0, OBJ_BADGE_ENT, OBJ_BUTTON, 0, 0, 0);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_BGCOLOR, InpColorBadgeEntry);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_COLOR, clrWhite);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_FONTSIZE, 9);
-      ObjectSetString(0, OBJ_BADGE_ENT, OBJPROP_FONT, "Segoe UI Bold");
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_BACK, false);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_ZORDER, 15);
-      ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_SELECTABLE, false);
-   }
-
-   if(ObjectFind(0, OBJ_BADGE_SL) < 0)
-   {
-      ObjectCreate(0, OBJ_BADGE_SL, OBJ_BUTTON, 0, 0, 0);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_BGCOLOR, InpColorBadgeSL);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_COLOR, clrWhite);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_FONTSIZE, 9);
-      ObjectSetString(0, OBJ_BADGE_SL, OBJPROP_FONT, "Segoe UI Bold");
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_BACK, false);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_ZORDER, 15);
-      ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_SELECTABLE, false);
-   }
+   // 7. Badges (Objetivo / Qtde / Stop) são criados em UpdateChartVisuals -> DrawInfoBadges
 
    g_lines_were_selected = true;
    g_line_was_moved = false;
@@ -514,7 +578,6 @@ void UpdateChartVisuals(string dragging_object="")
 
    datetime t1 = TimeCurrent();
    datetime t2 = t1 + PeriodSeconds() * InpBoxBarsWidth;
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
 
    // 1. Atualizar Caixas Coloridas
@@ -536,90 +599,170 @@ void UpdateChartVisuals(string dragging_object="")
    if(dragging_object != OBJ_LINE_TP)
       ObjectSetDouble(0, OBJ_LINE_TP, OBJPROP_PRICE, g_tp_price);
 
-   // Cálculos monetários
-   double sl_dist = MathAbs(g_entry_price - g_sl_price);
-   double tp_dist = MathAbs(g_entry_price - g_tp_price);
-   double sl_pts  = (point > 0) ? (sl_dist / point) : 0;
-   double tp_pts  = (point > 0) ? (tp_dist / point) : 0;
-   double rr_val  = (sl_dist > 0) ? (tp_dist / sl_dist) : 0;
-
-   ENUM_ORDER_TYPE order_type = (g_dir == DIR_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   double loss_money = 0.0;
-   double gain_money = 0.0;
-
-   OrderCalcProfit(order_type, _Symbol, g_calc_lot, g_entry_price, g_sl_price, loss_money);
-   OrderCalcProfit(order_type, _Symbol, g_calc_lot, g_entry_price, g_tp_price, gain_money);
-
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double risk_pct = (balance > 0) ? (MathAbs(loss_money) / balance * 100.0) : 0.0;
-   double gain_pct = (balance > 0) ? (MathAbs(gain_money) / balance * 100.0) : 0.0;
-   string curr     = AccountInfoString(ACCOUNT_CURRENCY);
-   string dir_str  = (g_dir == DIR_BUY) ? "Buy" : "Sell";
-
-   // 3. Atualizar Textos Flutuantes Diretamente Sobre as Linhas no Gráfico (OBJ_TEXT)
-   string lbl_tp = StringFormat("  ▲ TP: +%.0f pts | GAIN: +%.2f %s (+%.2f%%) | R:R %.1f:1 | %s",
-                                tp_pts, MathAbs(gain_money), curr, gain_pct, rr_val, DoubleToString(g_tp_price, digits));
+   // 3. Textos sobre as linhas: apenas o preço (os dados ficam nos badges estilo TradingView)
    ObjectSetInteger(0, OBJ_TXT_TP, OBJPROP_TIME, t1);
    ObjectSetDouble(0, OBJ_TXT_TP, OBJPROP_PRICE, g_tp_price);
-   ObjectSetString(0, OBJ_TXT_TP, OBJPROP_TEXT, lbl_tp);
+   ObjectSetString(0, OBJ_TXT_TP, OBJPROP_TEXT, "  TP " + DoubleToString(g_tp_price, digits));
 
-   string lbl_ent = StringFormat("  ● ENTRADA [%s] | Lote: %.2f | %s",
-                                 dir_str, g_calc_lot, DoubleToString(g_entry_price, digits));
    ObjectSetInteger(0, OBJ_TXT_ENT, OBJPROP_TIME, t1);
    ObjectSetDouble(0, OBJ_TXT_ENT, OBJPROP_PRICE, g_entry_price);
-   ObjectSetString(0, OBJ_TXT_ENT, OBJPROP_TEXT, lbl_ent);
+   ObjectSetString(0, OBJ_TXT_ENT, OBJPROP_TEXT, "  Entrada " + DoubleToString(g_entry_price, digits));
 
-   string lbl_sl = StringFormat("  ▼ SL: -%.0f pts | STOP: -%.2f %s (-%.2f%%) | %s",
-                                sl_pts, MathAbs(loss_money), curr, risk_pct, DoubleToString(g_sl_price, digits));
    ObjectSetInteger(0, OBJ_TXT_SL, OBJPROP_TIME, t1);
    ObjectSetDouble(0, OBJ_TXT_SL, OBJPROP_PRICE, g_sl_price);
-   ObjectSetString(0, OBJ_TXT_SL, OBJPROP_TEXT, lbl_sl);
+   ObjectSetString(0, OBJ_TXT_SL, OBJPROP_TEXT, "  SL " + DoubleToString(g_sl_price, digits));
 
-   // 4. Atualizar Badges Retangulares Sólidos (Garante que fiquem SEMPRE visíveis na tela)
-   int x_tp = 0, y_tp = 0;
-   int x_ent = 0, y_ent = 0;
-   int x_sl = 0, y_sl = 0;
+   // 4. Badges estilo TradingView (Objetivo / Qtde + Razão / Stop) recalculados a cada ajuste
+   int x1 = 0, x2 = 0, y_tmp = 0;
+   ChartTimePriceToXY(0, 0, t1, g_entry_price, x1, y_tmp);
+   ChartTimePriceToXY(0, 0, t2, g_entry_price, x2, y_tmp);
+   int x_center = (x2 > x1) ? (x1 + x2) / 2 : x1 + 150;
 
-   // Converte coordenada de t1 para pixels
-   ChartTimePriceToXY(0, 0, t1, g_tp_price, x_tp, y_tp);
-   ChartTimePriceToXY(0, 0, t1, g_entry_price, x_ent, y_ent);
-   ChartTimePriceToXY(0, 0, t1, g_sl_price, x_sl, y_sl);
+   DrawInfoBadges(OBJ_BADGE_TP, OBJ_BADGE_ENT, OBJ_BADGE_SL, x_center, (g_dir == DIR_BUY),
+                  g_entry_price, g_sl_price, g_tp_price, g_calc_lot, 0, 0.0, 0.0, false);
+}
 
+//+------------------------------------------------------------------+
+//| Badge retangular com fundo sólido e largura automática           |
+//+------------------------------------------------------------------+
+int PlaceBadge(string name, string text, color bg, int x_center, int y, bool visible)
+{
+   if(!visible)
+   {
+      ObjectDelete(0, name);
+      return 0;
+   }
+
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, name, OBJPROP_FONT, "Segoe UI Bold");
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_ZORDER, 15);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   }
+
+   uint tw = 0, th = 0;
+   TextSetFont("Segoe UI Bold", -80);
+   TextGetSize(text, tw, th);
+   int bw = (int)(tw * 1.1) + 16;
+   int bh = 20;
+
+   // Mantém o badge dentro da área visível (e fora do painel)
    int win_w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
    if(win_w <= 0) win_w = 800;
+   int x = x_center - bw / 2;
+   int min_x = g_panel_x + g_panel_w + 10;
+   if(x + bw > win_w - 10) x = win_w - bw - 10;
+   if(x < min_x) x = min_x;
 
-   // Garante que o badge fique sempre na tela visível
-   int badge_w = 280;
-   int clamped_x = x_tp;
-   if(clamped_x < g_panel_x + g_panel_w + 10) clamped_x = g_panel_x + g_panel_w + 10;
-   if(clamped_x + badge_w > win_w - 20) clamped_x = win_w - badge_w - 20;
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, bw);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, bh);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_STATE, false);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   return bh;
+}
 
-   // Badge TP
-   string b_tp = StringFormat("TP %.0f | Gain: +%.2f %s | RR %.1f:1 | +%.2f%%",
-                              tp_pts, MathAbs(gain_money), curr, rr_val, gain_pct);
-   ObjectSetString(0, OBJ_BADGE_TP, OBJPROP_TEXT, b_tp);
-   ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_XDISTANCE, clamped_x);
-   ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_YDISTANCE, y_tp - 10);
-   ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_XSIZE, badge_w);
-   ObjectSetInteger(0, OBJ_BADGE_TP, OBJPROP_YSIZE, 20);
+//+------------------------------------------------------------------+
+//| Texto no formato do TradingView:                                 |
+//|   "Objetivo: 0.695 (0.439%) 69 pts, Valor 104.79"                |
+//+------------------------------------------------------------------+
+string TvLevelText(string title, double entry, double level, double money)
+{
+   double dist = MathAbs(level - entry);
+   double pct  = (entry > 0) ? dist / entry * 100.0 : 0.0;
+   double pts  = (_Point > 0) ? dist / _Point : 0.0;
+   return StringFormat("%s: %s (%.3f%%) %.0f pts, Valor %.2f",
+                       title, DoubleToString(dist, _Digits), pct, pts, MathAbs(money));
+}
 
-   // Badge Entrada
-   string b_ent = StringFormat("%s | Lote: %.2f | RR %.1f:1 | Preco: %s",
-                               dir_str, g_calc_lot, rr_val, DoubleToString(g_entry_price, digits));
-   ObjectSetString(0, OBJ_BADGE_ENT, OBJPROP_TEXT, b_ent);
-   ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_XDISTANCE, clamped_x);
-   ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_YDISTANCE, y_ent - 10);
-   ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_XSIZE, badge_w);
-   ObjectSetInteger(0, OBJ_BADGE_ENT, OBJPROP_YSIZE, 20);
+//+------------------------------------------------------------------+
+//| Desenha os 4 badges do TradingView para uma caixa:               |
+//|   Objetivo (verde) no TP, Stop (vermelho) no SL e, no meio,      |
+//|   L&P/Qtde + Razão risco/retorno                                 |
+//|   state: 0 = prévia, 1 = pendente, 2 = aberta, 3 = fechada       |
+//+------------------------------------------------------------------+
+void DrawInfoBadges(string n_tp, string n_mid, string n_sl, int x_center, bool is_buy,
+                    double entry, double sl, double tp, double lot,
+                    int state, double cur_price, double pl_money, bool hide)
+{
+   string n_mid2 = n_mid + "2";
+   if(hide || entry <= 0)
+   {
+      ObjectDelete(0, n_tp);
+      ObjectDelete(0, n_mid);
+      ObjectDelete(0, n_mid2);
+      ObjectDelete(0, n_sl);
+      return;
+   }
 
-   // Badge SL
-   string b_sl = StringFormat("SL %.0f | Stop: -%.2f %s | -%.2f%%",
-                              sl_pts, MathAbs(loss_money), curr, risk_pct);
-   ObjectSetString(0, OBJ_BADGE_SL, OBJPROP_TEXT, b_sl);
-   ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_XDISTANCE, clamped_x);
-   ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_YDISTANCE, y_sl - 10);
-   ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_XSIZE, badge_w);
-   ObjectSetInteger(0, OBJ_BADGE_SL, OBJPROP_YSIZE, 20);
+   string curr = AccountInfoString(ACCOUNT_CURRENCY);
+   int x = 0, y_tp = 0, y_sl = 0, y_mid = 0;
+   int bh = 20;
+
+   // Objetivo (TP)
+   if(tp > 0 && ChartTimePriceToXY(0, 0, TimeCurrent(), tp, x, y_tp))
+   {
+      double gain = CalcMoney(is_buy, lot, entry, tp);
+      int y = (tp > entry) ? y_tp - bh - 2 : y_tp + 2;
+      PlaceBadge(n_tp, TvLevelText("Objetivo", entry, tp, gain), InpColorBadgeTP, x_center, y, true);
+   }
+   else ObjectDelete(0, n_tp);
+
+   // Stop (SL)
+   if(sl > 0 && ChartTimePriceToXY(0, 0, TimeCurrent(), sl, x, y_sl))
+   {
+      double loss = CalcMoney(is_buy, lot, entry, sl);
+      int y = (sl < entry) ? y_sl + 2 : y_sl - bh - 2;
+      PlaceBadge(n_sl, TvLevelText("Stop", entry, sl, loss), InpColorBadgeSL, x_center, y, true);
+   }
+   else ObjectDelete(0, n_sl);
+
+   // Centro: L&P / Qtde e Razão risco/retorno
+   double sl_dist = (sl > 0) ? MathAbs(entry - sl) : 0.0;
+   double tp_dist = (tp > 0) ? MathAbs(entry - tp) : 0.0;
+   double rr      = (sl_dist > 0) ? tp_dist / sl_dist : 0.0;
+   string side    = is_buy ? "Compra" : "Venda";
+
+   string line1;
+   double mid_price = entry;
+   color  mid_clr   = InpColorBadgeEntry;
+
+   if(state == 2 || state == 3)
+   {
+      double diff = (cur_price > 0) ? (is_buy ? cur_price - entry : entry - cur_price) : 0.0;
+      line1 = StringFormat("%s L&P: %s%s (%+.2f %s), Qtde: %s",
+                           (state == 2) ? "Aberto" : "Fechado",
+                           (diff >= 0) ? "+" : "-", DoubleToString(MathAbs(diff), _Digits),
+                           pl_money, curr, DoubleToString(lot, 2));
+      if(cur_price > 0) mid_price = cur_price;
+      mid_clr = (pl_money >= 0) ? InpColorBadgeTP : InpColorBadgeSL;
+   }
+   else if(state == 1)
+      line1 = StringFormat("%s pendente, Qtde: %s", side, DoubleToString(lot, 2));
+   else
+      line1 = StringFormat("%s, Qtde: %s", side, DoubleToString(lot, 2));
+
+   string line2 = StringFormat("Razão risco/retorno: %.2f", rr);
+
+   if(ChartTimePriceToXY(0, 0, TimeCurrent(), mid_price, x, y_mid))
+   {
+      PlaceBadge(n_mid,  line1, mid_clr, x_center, y_mid - bh, true);
+      PlaceBadge(n_mid2, line2, mid_clr, x_center, y_mid, true);
+   }
+   else
+   {
+      ObjectDelete(0, n_mid);
+      ObjectDelete(0, n_mid2);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -634,6 +777,7 @@ void DestroyChartVisualLines()
    ObjectDelete(0, OBJ_LINE_TP);
    ObjectDelete(0, OBJ_BADGE_TP);
    ObjectDelete(0, OBJ_BADGE_ENT);
+   ObjectDelete(0, OBJ_BADGE_ENT + "2");
    ObjectDelete(0, OBJ_BADGE_SL);
    ObjectDelete(0, OBJ_TXT_TP);
    ObjectDelete(0, OBJ_TXT_ENT);
@@ -726,7 +870,7 @@ void TrackText(string name, datetime t, double price, string text, color clr, EN
 
 //--- Registra uma nova caixa para acompanhar
 void AddTrack(ulong order_ticket, ulong pos_id, bool is_buy, double entry, double sl, double tp,
-              datetime t_start, datetime t_fill, int state)
+              datetime t_start, datetime t_fill, int state, double volume)
 {
    if(!InpTrackAfterSend || order_ticket == 0) return;
 
@@ -744,6 +888,9 @@ void AddTrack(ulong order_ticket, ulong pos_id, bool is_buy, double entry, doubl
    g_tracks[n].cur_price    = 0.0;
    g_tracks[n].close_price  = 0.0;
    g_tracks[n].result_money = 0.0;
+   g_tracks[n].volume       = volume;
+   g_tracks[n].show_info    = false;
+   g_tracks[n].t_end        = 0;
    g_tracks[n].t_start      = t_start;
    g_tracks[n].t_fill       = t_fill;
    g_tracks[n].t_close      = 0;
@@ -767,7 +914,8 @@ void RebuildTracksFromTrade()
       bool     is_buy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
 
       AddTrack(pos_id, pos_id, is_buy, PositionGetDouble(POSITION_PRICE_OPEN),
-               PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP), t_open, t_open, TRK_OPEN);
+               PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP), t_open, t_open, TRK_OPEN,
+               PositionGetDouble(POSITION_VOLUME));
    }
 
    for(int j = OrdersTotal() - 1; j >= 0; j--)
@@ -781,7 +929,8 @@ void RebuildTracksFromTrade()
       bool is_buy = (type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_STOP_LIMIT);
 
       AddTrack(ticket, 0, is_buy, OrderGetDouble(ORDER_PRICE_OPEN), OrderGetDouble(ORDER_SL),
-               OrderGetDouble(ORDER_TP), (datetime)OrderGetInteger(ORDER_TIME_SETUP), 0, TRK_PENDING);
+               OrderGetDouble(ORDER_TP), (datetime)OrderGetInteger(ORDER_TIME_SETUP), 0, TRK_PENDING,
+               OrderGetDouble(ORDER_VOLUME_CURRENT));
    }
 }
 
@@ -799,6 +948,7 @@ bool RefreshTrack(TradeTrack &t)
          if(OrderGetDouble(ORDER_PRICE_OPEN) > 0) t.entry = OrderGetDouble(ORDER_PRICE_OPEN);
          t.sl = OrderGetDouble(ORDER_SL);
          t.tp = OrderGetDouble(ORDER_TP);
+         t.volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
          return true;
       }
 
@@ -830,6 +980,7 @@ bool RefreshTrack(TradeTrack &t)
       t.sl           = PositionGetDouble(POSITION_SL);
       t.tp           = PositionGetDouble(POSITION_TP);
       t.cur_price    = PositionGetDouble(POSITION_PRICE_CURRENT);
+      t.volume       = PositionGetDouble(POSITION_VOLUME);
       t.result_money = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
       return true;
    }
@@ -962,6 +1113,48 @@ void DrawTrack(TradeTrack &t)
    }
 
    TrackText(TrackName(t, "TXT"), t_end, t.entry, txt, txt_clr, t.is_buy ? ANCHOR_RIGHT_UPPER : ANCHOR_RIGHT_LOWER);
+
+   // Dados estilo TradingView (Objetivo / L&P + Qtde / Razão / Stop): aparecem ao clicar na caixa
+   t.t_end = t_end;
+   bool show = (InpShowInfoAlways || t.show_info);
+   int x1 = 0, x2 = 0, y_tmp = 0;
+   bool ok = ChartTimePriceToXY(0, 0, t_start, t.entry, x1, y_tmp) && ChartTimePriceToXY(0, 0, t_end, t.entry, x2, y_tmp);
+   int x_center = (ok && x2 > x1) ? (x1 + x2) / 2 : x1 + 100;
+   int badge_state = (t.state == TRK_PENDING) ? 1 : (t.state == TRK_OPEN) ? 2 : 3;
+   DrawInfoBadges(TrackName(t, "B_TP"), TrackName(t, "B_MID"), TrackName(t, "B_SL"), x_center, t.is_buy,
+                  t.entry, t.sl, t.tp, t.volume, badge_state, t.cur_price, t.result_money, !show);
+}
+
+//--- Redesenha sem consultar o servidor (usado em zoom/rolagem do gráfico)
+void DrawAllTracks()
+{
+   for(int i = 0; i < ArraySize(g_tracks); i++)
+      DrawTrack(g_tracks[i]);
+}
+
+//--- Clique no gráfico: se caiu dentro de uma caixa, mostra/esconde os dados dela
+bool ToggleTrackInfoAt(int x, int y)
+{
+   int      sub = 0;
+   datetime t   = 0;
+   double   p   = 0.0;
+   if(!ChartXYToTimePrice(0, x, y, sub, t, p) || sub != 0) return false;
+
+   for(int i = ArraySize(g_tracks) - 1; i >= 0; i--)
+   {
+      double hi = g_tracks[i].entry, lo = g_tracks[i].entry;
+      if(g_tracks[i].sl > 0) { hi = MathMax(hi, g_tracks[i].sl); lo = MathMin(lo, g_tracks[i].sl); }
+      if(g_tracks[i].tp > 0) { hi = MathMax(hi, g_tracks[i].tp); lo = MathMin(lo, g_tracks[i].tp); }
+
+      if(t >= g_tracks[i].t_start && t <= g_tracks[i].t_end && p >= lo && p <= hi)
+      {
+         g_tracks[i].show_info = !g_tracks[i].show_info;
+         DrawTrack(g_tracks[i]);
+         ChartRedraw();
+         return true;
+      }
+   }
+   return false;
 }
 
 //--- Atualiza todas as caixas acompanhadas
@@ -1118,6 +1311,7 @@ void CreatePanelGUI()
 
    CreateLabel(PREFIX_GUI + "LBL_CALC_LOT", g_panel_x + 118, cur_y + 3, "Lote:", clrWhite, 8);
    CreateEdit(PREFIX_GUI + "EDT_CALC_LOT", g_panel_x + 152, cur_y, 62, 22, DoubleToString(g_calc_lot, 2), clrWhite, clrBlack);
+   g_lot_shown = g_calc_lot;
    CreateButton(PREFIX_GUI + "BTN_RECALC", g_panel_x + 220, cur_y, 48, 22, "Calc", C'0,162,232', clrWhite, 8);
    cur_y += 28;
 
@@ -1224,20 +1418,45 @@ void UpdatePanelInfo()
    ObjectSetString(0, PREFIX_GUI + "BTN_MKT_BUY", OBJPROP_TEXT, StringFormat("COMPRAR\n%s", DoubleToString(ask, digits)));
    ObjectSetString(0, PREFIX_GUI + "BTN_MKT_SELL", OBJPROP_TEXT, StringFormat("VENDER\n%s", DoubleToString(bid, digits)));
 
-   // Cálculos para exibição no painel
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double sl_dist = MathAbs(g_entry_price - g_sl_price);
-   double tp_dist = MathAbs(g_entry_price - g_tp_price);
+   // Fonte dos valores do painel:
+   //  - Linhas ativas  -> prévia das linhas (recalculada a cada ajuste)
+   //  - Sem linhas     -> último trade aberto/pendente deste EA (valores REAIS: lote, SL e TP da corretora)
+   //  - Nenhum trade   -> última configuração das linhas
+   bool   src_buy   = (g_dir == DIR_BUY);
+   double src_ent   = g_entry_price;
+   double src_sl    = g_sl_price;
+   double src_tp    = g_tp_price;
+   double src_lot   = g_calc_lot;
+   string src_title = "";
+   double src_pl    = 0.0;
+   bool   src_trade = false;
+
+   if(!g_lines_active)
+   {
+      for(int i = ArraySize(g_tracks) - 1; i >= 0; i--)
+      {
+         if(g_tracks[i].state == TRK_CLOSED) continue;
+         src_buy   = g_tracks[i].is_buy;
+         src_ent   = g_tracks[i].entry;
+         src_sl    = g_tracks[i].sl;
+         src_tp    = g_tracks[i].tp;
+         src_lot   = g_tracks[i].volume;
+         src_pl    = g_tracks[i].result_money;
+         src_title = (g_tracks[i].state == TRK_OPEN) ? "ABERTO" : "PENDENTE";
+         src_trade = true;
+         break;
+      }
+   }
+
+   double point   = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double sl_dist = (src_sl > 0) ? MathAbs(src_ent - src_sl) : 0.0;
+   double tp_dist = (src_tp > 0) ? MathAbs(src_ent - src_tp) : 0.0;
    double sl_pts  = (point > 0) ? (sl_dist / point) : 0;
    double tp_pts  = (point > 0) ? (tp_dist / point) : 0;
    double rr_val  = (sl_dist > 0) ? (tp_dist / sl_dist) : 0;
 
-   ENUM_ORDER_TYPE order_type = (g_dir == DIR_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   double loss_money = 0.0;
-   double gain_money = 0.0;
-
-   OrderCalcProfit(order_type, _Symbol, g_calc_lot, g_entry_price, g_sl_price, loss_money);
-   OrderCalcProfit(order_type, _Symbol, g_calc_lot, g_entry_price, g_tp_price, gain_money);
+   double loss_money = (src_sl > 0) ? CalcMoney(src_buy, src_lot, src_ent, src_sl) : 0.0;
+   double gain_money = (src_tp > 0) ? CalcMoney(src_buy, src_lot, src_ent, src_tp) : 0.0;
 
    double risk_pct = (balance > 0) ? (MathAbs(loss_money) / balance * 100.0) : 0.0;
    double gain_pct = (balance > 0) ? (MathAbs(gain_money) / balance * 100.0) : 0.0;
@@ -1247,9 +1466,19 @@ void UpdatePanelInfo()
                    StringFormat("GAIN: +%.2f %s (+%.2f%%) | %.0f pts", MathAbs(gain_money), curr, gain_pct, tp_pts));
    ObjectSetString(0, PREFIX_GUI + "LBL_STOP_VAL", OBJPROP_TEXT,
                    StringFormat("STOP: -%.2f %s (-%.2f%%) | %.0f pts", MathAbs(loss_money), curr, risk_pct, sl_pts));
-   ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
-                   StringFormat("RISCO / GAIN: %.1f:1  (Ganho %.1fx Risco)", rr_val, rr_val));
-   ObjectSetString(0, PREFIX_GUI + "EDT_CALC_LOT", OBJPROP_TEXT, DoubleToString(g_calc_lot, 2));
+   if(src_trade)
+      ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
+                      StringFormat("%s L&P %+.2f | Lote %s | RR %.2f", src_title, src_pl, DoubleToString(src_lot, 2), rr_val));
+   else
+      ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
+                      StringFormat("RISCO / GAIN: %.2f:1  (Ganho %.2fx Risco)", rr_val, rr_val));
+
+   // Só reescreve o campo de lote quando o valor mudou (não atrapalha a digitação)
+   if(MathAbs(g_calc_lot - g_lot_shown) > 1e-10)
+   {
+      ObjectSetString(0, PREFIX_GUI + "EDT_CALC_LOT", OBJPROP_TEXT, DoubleToString(g_calc_lot, 2));
+      g_lot_shown = g_calc_lot;
+   }
 
    if(g_lines_active && !g_is_dragging)
    {
@@ -1357,7 +1586,7 @@ void SendConfiguredOrder()
       if(fill_price <= 0) fill_price = price;
       datetime now = TimeCurrent();
       AddTrack(m_trade.ResultOrder(), 0, (g_dir == DIR_BUY), fill_price, sl, tp,
-               now, is_market ? now : 0, is_market ? TRK_OPEN : TRK_PENDING);
+               now, is_market ? now : 0, is_market ? TRK_OPEN : TRK_PENDING, g_calc_lot);
       UpdateTrackers();
 
       // Ordem enviada: limpar linhas de ajuste do gráfico
@@ -1376,6 +1605,32 @@ void SendConfiguredOrder()
       string err_msg = StringFormat("Erro ao enviar: %d (%s)", m_trade.ResultRetcode(), m_trade.ResultRetcodeDescription());
       Print(err_msg);
       ObjectSetString(0, PREFIX_GUI + "STATUS_LBL", OBJPROP_TEXT, err_msg);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Prepara Entrada/SL/TP para ordem a mercado mantendo as distâncias|
+//| atuais, com SL e TP sempre do lado correto da direção            |
+//+------------------------------------------------------------------+
+void SetMarketLevels(ENUM_TRADE_DIR dir)
+{
+   double sl_dist = MathAbs(g_entry_price - g_sl_price);
+   double tp_dist = MathAbs(g_entry_price - g_tp_price);
+   if(sl_dist <= 0) sl_dist = 150 * _Point;
+   if(tp_dist <= 0) tp_dist = sl_dist * 3.0;
+
+   g_dir = dir;
+   if(dir == DIR_BUY)
+   {
+      g_entry_price = NormalizePrice(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+      g_sl_price    = NormalizePrice(g_entry_price - sl_dist);
+      g_tp_price    = NormalizePrice(g_entry_price + tp_dist);
+   }
+   else
+   {
+      g_entry_price = NormalizePrice(SymbolInfoDouble(_Symbol, SYMBOL_BID));
+      g_sl_price    = NormalizePrice(g_entry_price + sl_dist);
+      g_tp_price    = NormalizePrice(g_entry_price - tp_dist);
    }
 }
 
@@ -1520,68 +1775,56 @@ void OnChartEvent(const int id,
                   const double &dparam,
                   const string &sparam)
 {
-   // 1. ARRASTO SUAVE DE LINHAS NO GRÁFICO (DRAG & DROP)
+   // 1. ARRASTO DE LINHAS: recalcula Lote / Gain / Stop / R:R em tempo real
+   //    (o MT5 só envia OBJECT_DRAG ao soltar; durante o arrasto usamos o
+   //     movimento do mouse + timer de 200 ms para ler a posição das linhas)
+   if(id == CHARTEVENT_MOUSE_MOVE)
+   {
+      if(g_lines_active) SyncLinesFromChart();
+      return;
+   }
+
    if(id == CHARTEVENT_OBJECT_DRAG)
    {
-      g_is_dragging = true;
-      g_line_was_moved = true;
-
-      if(sparam == OBJ_LINE_ENT)
+      if(sparam == OBJ_LINE_ENT || sparam == OBJ_LINE_SL || sparam == OBJ_LINE_TP)
       {
-         g_entry_price = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_ENT, OBJPROP_PRICE));
-         RecalculateRiskAndLot();
-         UpdateChartVisuals(OBJ_LINE_ENT);
+         SyncLinesFromChart();
+         g_is_dragging = false;
+         UpdateChartVisuals("");   // encaixa a linha no tick exato do ativo
          UpdatePanelInfo();
          ChartRedraw();
-         return;
       }
-      else if(sparam == OBJ_LINE_SL)
-      {
-         g_sl_price = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_SL, OBJPROP_PRICE));
-         RecalculateRiskAndLot();
-         UpdateChartVisuals(OBJ_LINE_SL);
-         UpdatePanelInfo();
-         ChartRedraw();
-         return;
-      }
-      else if(sparam == OBJ_LINE_TP)
-      {
-         g_tp_price = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_TP, OBJPROP_PRICE));
-         g_rr_ratio = RR_FREE;
-         RecalculateRiskAndLot();
-         UpdateChartVisuals(OBJ_LINE_TP);
-         UpdatePanelInfo();
-         ChartRedraw();
-         return;
-      }
+      return;
    }
 
    // 2. Eventos de Redimensionamento / Scroll do Gráfico
    if(id == CHARTEVENT_CHART_CHANGE)
    {
       if(g_lines_active && !g_is_dragging)
-      {
          UpdateChartVisuals("");
-         ChartRedraw();
-      }
+      DrawAllTracks();
+      ChartRedraw();
       return;
    }
 
-   // 3. Soltura do Mouse ou Clique no Gráfico
+   // 3. Clique no Gráfico / Alteração de Objeto
    if(id == CHARTEVENT_OBJECT_CHANGE || id == CHARTEVENT_OBJECT_CLICK || id == CHARTEVENT_CLICK)
    {
       g_is_dragging = false;
 
       if(sparam == OBJ_LINE_ENT || sparam == OBJ_LINE_SL || sparam == OBJ_LINE_TP)
       {
-         g_entry_price = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_ENT, OBJPROP_PRICE));
-         g_sl_price    = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_SL, OBJPROP_PRICE));
-         g_tp_price    = NormalizePrice(ObjectGetDouble(0, OBJ_LINE_TP, OBJPROP_PRICE));
-         RecalculateRiskAndLot();
-         UpdateChartVisuals("");
-         UpdatePanelInfo();
-         ChartRedraw();
+         SyncLinesFromChart();
+         g_is_dragging = false;
       }
+
+      // Clique em cima de uma caixa de Risco/Gain enviada: mostra/esconde os dados (igual TradingView)
+      if(id == CHARTEVENT_CLICK)
+         ToggleTrackInfoAt((int)lparam, (int)dparam);
+
+      // Badges são botões: não deixa ficarem "afundados" ao clicar
+      if(id == CHARTEVENT_OBJECT_CLICK && (StringFind(sparam, PREFIX_TRK) == 0 || StringFind(sparam, "TABR_BDG_") == 0))
+         ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
 
       if(g_lines_active && g_auto_send)
       {
@@ -1647,6 +1890,7 @@ void OnChartEvent(const int id,
       if(sparam == PREFIX_GUI + "BTN_RISK_BAL")
       {
          g_risk_mode = RISK_PERCENT_BALANCE;
+         g_manual_lot = false;
          RecalculateRiskAndLot();
          DestroyPanelGUI();
          CreatePanelGUI();
@@ -1657,6 +1901,7 @@ void OnChartEvent(const int id,
       if(sparam == PREFIX_GUI + "BTN_RISK_EQ")
       {
          g_risk_mode = RISK_PERCENT_EQUITY;
+         g_manual_lot = false;
          RecalculateRiskAndLot();
          DestroyPanelGUI();
          CreatePanelGUI();
@@ -1667,6 +1912,7 @@ void OnChartEvent(const int id,
       if(sparam == PREFIX_GUI + "BTN_RISK_MON")
       {
          g_risk_mode = RISK_FIXED_MONEY;
+         g_manual_lot = false;
          RecalculateRiskAndLot();
          DestroyPanelGUI();
          CreatePanelGUI();
@@ -1680,6 +1926,7 @@ void OnChartEvent(const int id,
          string r_str = ObjectGetString(0, PREFIX_GUI + "EDT_RISK_VAL", OBJPROP_TEXT);
          g_risk_value = StringToDouble(r_str);
          if(g_risk_value <= 0) g_risk_value = 1.0;
+         g_manual_lot = false;
 
          RecalculateRiskAndLot();
          ObjectSetString(0, PREFIX_GUI + "EDT_CALC_LOT", OBJPROP_TEXT, DoubleToString(g_calc_lot, 2));
@@ -1796,8 +2043,7 @@ void OnChartEvent(const int id,
       // Comprar a Mercado Imediato
       if(sparam == PREFIX_GUI + "BTN_MKT_BUY")
       {
-         g_dir = DIR_BUY;
-         g_entry_price = NormalizePrice(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+         SetMarketLevels(DIR_BUY);
          RecalculateRiskAndLot();
          SendConfiguredOrder();
          return;
@@ -1806,8 +2052,7 @@ void OnChartEvent(const int id,
       // Vender a Mercado Imediato
       if(sparam == PREFIX_GUI + "BTN_MKT_SELL")
       {
-         g_dir = DIR_SELL;
-         g_entry_price = NormalizePrice(SymbolInfoDouble(_Symbol, SYMBOL_BID));
+         SetMarketLevels(DIR_SELL);
          RecalculateRiskAndLot();
          SendConfiguredOrder();
          return;
@@ -1849,6 +2094,7 @@ void OnChartEvent(const int id,
       {
          g_risk_value = StringToDouble(ObjectGetString(0, PREFIX_GUI + "EDT_RISK_VAL", OBJPROP_TEXT));
          if(g_risk_value <= 0) g_risk_value = 1.0;
+         g_manual_lot = false;
          RecalculateRiskAndLot();
          ObjectSetString(0, PREFIX_GUI + "EDT_CALC_LOT", OBJPROP_TEXT, DoubleToString(g_calc_lot, 2));
          if(g_lines_active) UpdateChartVisuals("");
@@ -1858,6 +2104,7 @@ void OnChartEvent(const int id,
       else if(sparam == PREFIX_GUI + "EDT_CALC_LOT")
       {
          g_calc_lot = NormalizeLot(StringToDouble(ObjectGetString(0, PREFIX_GUI + "EDT_CALC_LOT", OBJPROP_TEXT)));
+         g_manual_lot = true;   // mantém este lote; Stop/Gain em dinheiro passam a usar ele
          if(g_lines_active) UpdateChartVisuals("");
          UpdatePanelInfo();
          ChartRedraw();
