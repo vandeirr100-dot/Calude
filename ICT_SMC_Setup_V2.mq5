@@ -5,7 +5,7 @@
 //|  Setup com Entrada / Stop / Alvo - sinal no momento do rompimento|
 //+------------------------------------------------------------------+
 #property copyright   "ICT SMC Setup"
-#property version     "1.10"
+#property version     "1.20"
 #property description "Bias HTF, Swings HTF, BMS/MSS, OB, IFVG, IOFED, EQH/EQL, SMT e setup Entrada/SL/TP em tempo real"
 #property indicator_chart_window
 #property indicator_buffers 0
@@ -70,6 +70,7 @@ input bool   InpSMTInverse = false;                // Correlacao inversa (true p
 input group "=== Setup / Trade ==="
 input bool         InpShowSetup     = true;             // Mostrar setup
 input bool         InpRequireBias   = true;             // Exigir alinhamento com o Bias HTF
+input bool         InpCounterMSS    = true;             // Permitir setup contra o Bias apos MSS no TF atual
 input double       InpEntryLevel    = 0.5;              // Nivel fib da entrada (0.5 = equilibrio)
 input double       InpSLBufferATR   = 0.10;             // Folga do stop alem da zona (x ATR)
 input ENUM_TP_MODE InpTPMode        = TP_MODE_RR;       // Modo do alvo
@@ -98,6 +99,8 @@ int      g_bias = 0;
 double   g_htfSH = 0, g_htfSL = 0;
 int      g_htfSHbar = -1, g_htfSLbar = -1;
 datetime g_alertSetup = 0, g_alertFill = 0;
+int      g_setupEv = -1;                                  // evento que gera o setup ativo
+bool     g_setupCounter = false;                          // setup contra o Bias HTF (confirmado por MSS)
 
 //==================================================================== UTEIS
 int      IMax(int a,int b) { return a>b?a:b; }
@@ -311,6 +314,7 @@ bool Analyze()
 
    ScanStructure();
    bool ok=ComputeHTF();
+   g_setupEv=SelectSetup();
 
    if(InpShowPanel)                  DrawPanel();
    DrawHTFSwings();
@@ -549,6 +553,12 @@ void DrawPanel()
    if(g_bias==1)  { bt="ALTISTA";  bc=InpBullColor; }
    if(g_bias==-1) { bt="BAIXISTA"; bc=C'229,57,53'; }
    LB(tx,ty+22,bt,bc,10,"Arial Bold");
+   if(g_setupEv>=0)
+     {
+      int sd=g_ev[g_setupEv].dir;
+      LB(tx,ty+62,(sd==1?"Setup: COMPRA":"Setup: VENDA")+(g_setupCounter?" (MSS)":""),
+         sd==1?InpBullColor:C'229,57,53',8,"Arial Bold");
+     }
 
    // tempo restante da vela HTF
    int left=(int)(r[n-1].time+PeriodSeconds(InpHTF)-TimeCurrent());
@@ -597,7 +607,7 @@ void DrawEvents()
      }
 
    if(!InpShowOB) return;
-   int mainDir=(g_bias!=0)?g_bias:g_ev[n-1].dir;
+   int mainDir=(g_setupEv>=0)?g_ev[g_setupEv].dir:((g_bias!=0)?g_bias:g_ev[n-1].dir);
    int eMain=-1, eOpp=-1;
    for(int e=n-1;e>=0;e--)
      {
@@ -766,21 +776,29 @@ void DrawSMT()
    Txt(g_t[b1],pn,note,g_tc,bull?ANCHOR_LEFT_UPPER:ANCHOR_LEFT_LOWER,InpFontSize-1);
   }
 
+//--- escolhe o evento do setup: sempre a estrutura MAIS RECENTE.
+//    Um setup antigo deixa de valer assim que a estrutura rompe para o
+//    lado oposto (nao fica "preso" na compra/venda anterior).
+//    Contra o Bias HTF so e aceito se a virada foi confirmada por MSS.
+int SelectSetup()
+  {
+   g_setupCounter=false;
+   int n=ArraySize(g_ev);
+   if(n==0) return -1;
+   int e=n-1;
+   int d=g_ev[e].dir;
+   if(!InpRequireBias || d==g_bias) return e;
+   if(!InpCounterMSS) return -1;
+   for(int k=e;k>=0 && g_ev[k].dir==d;k--)
+      if(g_ev[k].type==1) { g_setupCounter=true; return e; }
+   return -1;
+  }
+
 //--- Setup: aparece no instante do rompimento, entrada marcada no instante do toque
 void DrawSetup()
   {
-   int n=ArraySize(g_ev);
-   if(n==0) return;
-   if(InpRequireBias && g_bias==0) return;
-
-   int ei=-1;
-   for(int e=n-1;e>=0;e--)
-     {
-      if(InpRequireBias && g_ev[e].dir!=g_bias) continue;
-      ei=e; break;
-     }
-   if(ei<0) return;
-   SEvent ev=g_ev[ei];
+   if(g_setupEv<0) return;
+   SEvent ev=g_ev[g_setupEv];
    if(g_last-ev.toBar>InpMaxSetupAge) return;
    int d=ev.dir;
 
@@ -846,7 +864,7 @@ void DrawSetup()
         }
      }
 
-   string side=(d==1)?"Comprar":"Vender";
+   string side=((d==1)?"Comprar":"Vender")+(g_setupCounter?" (contra Bias, MSS)":"");
    if(fill>=0)
      {
       if(d==1)
