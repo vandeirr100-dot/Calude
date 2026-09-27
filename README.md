@@ -27,4 +27,5 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 | S/R | `S/R ligados ao iniciar` | Ex.: `W1,D1,H4` |
 | S/R | `Velas de cada lado` | Força do topo/fundo |
 | S/R | `Máx. níveis acima e abaixo` | Quantidade de níveis por TF |
-| Painel | `Painel X / Y` | Posição do painel |
+| Painel | `Posição do painel` | Em cima/embaixo, esquerda/direita (ou botão **POS** no painel) |
+| Painel | `Margem horizontal / vertical` | Distância da borda escolhida |

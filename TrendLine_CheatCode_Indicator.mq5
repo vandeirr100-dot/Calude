@@ -35,6 +35,14 @@
 #property indicator_color3  clrGold
 #property indicator_width3  2
 
+enum ENUM_PANEL_POS
+  {
+   PANEL_TOP_LEFT     = 0,  // Em cima à esquerda
+   PANEL_TOP_RIGHT    = 1,  // Em cima à direita
+   PANEL_BOTTOM_LEFT  = 2,  // Embaixo à esquerda
+   PANEL_BOTTOM_RIGHT = 3   // Embaixo à direita
+  };
+
 //--- ENTRADAS -------------------------------------------------------
 input group "--- Configurações de Pivôs e Linhas ---"
 input int             InpPivotDepth     = 5;            // Velas à direita para confirmar o Ponto B
@@ -69,8 +77,9 @@ input ENUM_LINE_STYLE InpSRStyle        = STYLE_DASH;   // Estilo das linhas de 
 input int             InpSRLabelShift   = 6;            // Posição dos rótulos (velas à direita)
 
 input group "--- Painel e Relógio ---"
-input int             InpPanelX         = 12;           // Painel: distância da esquerda (px)
-input int             InpPanelY         = 30;           // Painel: distância do topo (px)
+input ENUM_PANEL_POS  InpPanelPos       = PANEL_TOP_LEFT;// Posição do painel
+input int             InpPanelX         = 12;           // Painel: margem horizontal (px)
+input int             InpPanelY         = 30;           // Painel: margem vertical (px)
 input color           InpAccent         = C'0,168,255'; // Cor de destaque do painel
 input bool            InpShowClock      = true;         // Relógio regressivo no gráfico
 input bool            InpShowLabels     = true;         // Rótulos nos níveis de S/R
@@ -156,6 +165,9 @@ bool g_clock  = true;
 bool g_arrows = true;
 bool g_labels = true;
 bool g_min    = false;
+int  g_pos    = 0;       // ENUM_PANEL_POS atual (pode ser trocado pelo botão do painel)
+long g_chartW = 0;
+long g_chartH = 0;
 
 //+------------------------------------------------------------------+
 //| Utilidades                                                       |
@@ -274,6 +286,9 @@ void LoadState()
    g_arrows = LoadFlag("ARROWS", InpShowArrows);
    g_labels = LoadFlag("LABELS", InpShowLabels);
    g_min    = LoadFlag("MIN",    false);
+   string pn = GVKey("POS");
+   g_pos    = GlobalVariableCheck(pn) ? (int)GlobalVariableGet(pn) : (int)InpPanelPos;
+   if(g_pos < 0 || g_pos > 3) g_pos = (int)InpPanelPos;
   }
 
 void SaveState()
@@ -288,6 +303,7 @@ void SaveState()
    SaveFlag("ARROWS", g_arrows);
    SaveFlag("LABELS", g_labels);
    SaveFlag("MIN",    g_min);
+   GlobalVariableSet(GVKey("POS"), g_pos);
   }
 
 void ApplyArrows()
@@ -987,10 +1003,31 @@ void UpdatePanel()
       ObjectSetInteger(0, PNL + "btn_min", OBJPROP_STATE, false);
   }
 
+// Altura total do painel (precisa bater com o layout de BuildPanel)
+int PanelHeight()
+  {
+   if(g_min) return HDR_H;
+   return HDR_H + 173 + g_nSlots * ROW_H;
+  }
+
+// Canto superior esquerdo do painel conforme a posição escolhida
+void PanelOrigin(int &X, int &Y)
+  {
+   g_chartW = ChartGetInteger(0, CHART_WIDTH_IN_PIXELS, 0);
+   g_chartH = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS, 0);
+   bool right  = (g_pos == PANEL_TOP_RIGHT    || g_pos == PANEL_BOTTOM_RIGHT);
+   bool bottom = (g_pos == PANEL_BOTTOM_LEFT  || g_pos == PANEL_BOTTOM_RIGHT);
+   X = right  ? (int)g_chartW - PANEL_W       - InpPanelX : InpPanelX;
+   Y = bottom ? (int)g_chartH - PanelHeight() - InpPanelY : InpPanelY;
+   X = MathMax(X, 0);
+   Y = MathMax(Y, 0);
+  }
+
 void BuildPanel()
   {
    ObjectsDeleteAll(0, PNL);
-   int X = InpPanelX, Y = InpPanelY, W = PANEL_W;
+   int X = 0, Y = 0, W = PANEL_W;
+   PanelOrigin(X, Y);
 
    //--- cabeçalho
    PRect (PNL + "hdr",    X, Y, W, HDR_H, C_CARD, C_BORDER);
@@ -998,11 +1035,13 @@ void BuildPanel()
    PLabel(PNL + "title",  X + 14, Y + 5,  "TRENDLINE CHEATCODE", C_TEXT, 9, "Segoe UI Semibold");
    PLabel(PNL + "sub",    X + 14, Y + 20, _Symbol + "  ·  " + TFName(PERIOD_CURRENT) + "  ·  MTF + S/R",
           C_MUTED, 7, "Segoe UI");
+   PButton(PNL + "btn_pos", X + W - 58, Y + 8, 24, 20, "POS");
+   ObjectSetString(0, PNL + "btn_pos", OBJPROP_TOOLTIP, "Mudar o painel de canto");
    PButton(PNL + "btn_min", X + W - 30, Y + 8, 22, 20, g_min ? "+" : "—");
 
    if(g_min)
      {
-      PLabel(PNL + "hclock", X + W - 38, Y + 10, "--:--", C_TEXT, 10, "Consolas", ANCHOR_RIGHT_UPPER);
+      PLabel(PNL + "hclock", X + W - 66, Y + 10, "--:--", C_TEXT, 10, "Consolas", ANCHOR_RIGHT_UPPER);
       UpdatePanel();
       UpdateClock();
       return;
@@ -1175,6 +1214,7 @@ int OnCalculate(const int rates_total,
 void OnTimer()
   {
    static int ticks = 0;
+   CheckPanelPos();
    UpdateClock();
    if(++ticks >= 5)                                  // tenta de novo TFs cujos dados ainda carregavam
      {
@@ -1184,6 +1224,15 @@ void OnTimer()
    ChartRedraw();
   }
 
+// Painel à direita/embaixo acompanha o redimensionamento do gráfico
+void CheckPanelPos()
+  {
+   if(g_pos == PANEL_TOP_LEFT) return;
+   if(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS, 0)  != g_chartW ||
+      ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS, 0) != g_chartH)
+      BuildPanel();
+  }
+
 //+------------------------------------------------------------------+
 //| Cliques no painel                                                |
 //+------------------------------------------------------------------+
@@ -1191,6 +1240,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
   {
    if(id == CHARTEVENT_CHART_CHANGE)
      {
+      CheckPanelPos();
       UpdateClock();
       ChartRedraw();
       return;
@@ -1204,6 +1254,13 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    if(key == "btn_min")
      {
       g_min = !g_min;
+      BuildPanel();
+     }
+   else if(key == "btn_pos")
+     {
+      // gira: em cima esq. -> em cima dir. -> embaixo dir. -> embaixo esq.
+      const int next[4] = {PANEL_TOP_RIGHT, PANEL_BOTTOM_RIGHT, PANEL_TOP_LEFT, PANEL_BOTTOM_LEFT};
+      g_pos = next[g_pos];
       BuildPanel();
      }
    else if(StringFind(key, "lt_") == 0)
