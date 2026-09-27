@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Trade Assistant MT5 - Edição em Português"
 #property link        "https://www.mql5.com"
-#property version     "1.70"
+#property version     "1.71"
 #property description "Boleta com cálculo dinâmico visível nas linhas e painel: Risco, Gain e R:R (tipo 3:1)."
 #property description "Gráfico inicia limpo. Criação de linhas sob demanda com arrasto 100% livre."
 #property description "Envio ao desmarcar as linhas ou ao clicar em Enviar Ordem."
@@ -981,7 +981,7 @@ bool RefreshTrack(TradeTrack &t)
       t.tp           = PositionGetDouble(POSITION_TP);
       t.cur_price    = PositionGetDouble(POSITION_PRICE_CURRENT);
       t.volume       = PositionGetDouble(POSITION_VOLUME);
-      t.result_money = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      t.result_money = PositionGetDouble(POSITION_PROFIT);
       return true;
    }
 
@@ -1404,7 +1404,16 @@ void UpdatePanelInfo()
    ObjectSetString(0, PREFIX_GUI + "INFO_TIME", OBJPROP_TEXT, StringFormat("%02d:%02d:%02d", dt.hour, dt.min, dt.sec));
 
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double profit  = AccountInfoDouble(ACCOUNT_PROFIT);
+   // Lucro apenas das posições deste EA neste ativo (mesmo valor da coluna "Lucro" da plataforma).
+   // Antes usava ACCOUNT_PROFIT, que soma TODAS as posições da conta (outros ativos e trades manuais).
+   double profit  = 0.0;
+   for(int p = PositionsTotal() - 1; p >= 0; p--)
+   {
+      if(PositionGetTicket(p) == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      profit += PositionGetDouble(POSITION_PROFIT);
+   }
    string curr    = AccountInfoString(ACCOUNT_CURRENCY);
 
    ObjectSetString(0, PREFIX_GUI + "INFO_BAL", OBJPROP_TEXT, StringFormat("Saldo: %.2f %s", balance, curr));

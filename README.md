@@ -36,6 +36,10 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 
 Boleta visual (`TradeAssistant_BR.mq5`, Expert Advisor) com caixas de Risco/Gain arrastáveis.
 
+## Novidades da versão 1.71
+
+- **Lucro do painel** agora soma só as posições deste EA neste ativo (mesmo valor da coluna "Lucro" da plataforma). Antes somava a conta inteira.
+
 ## Novidades da versão 1.70
 
 - **Recálculo em tempo real ao arrastar as linhas**: Lote, Gain, Stop e R:R são atualizados *durante* o arrasto (o MT5 só avisa ao soltar; agora o EA lê as linhas a cada 200 ms e no movimento do mouse).
