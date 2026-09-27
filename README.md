@@ -29,3 +29,20 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 | S/R | `Máx. níveis acima e abaixo` | Quantidade de níveis por TF |
 | Painel | `Posição do painel` | Em cima/embaixo, esquerda/direita (ou botão **POS** no painel) |
 | Painel | `Margem horizontal / vertical` | Distância da borda escolhida |
+
+---
+
+# Trade Assistant BR — MT5
+
+Boleta visual (`TradeAssistant_BR.mq5`, Expert Advisor) com caixas de Risco/Gain arrastáveis.
+
+## Novidades da versão 1.60
+
+- **Caixa de Risco/Gain continua no gráfico depois que a ordem é enviada** (igual à ferramenta de posição do TradingView):
+  - Cores do TradingView: ganho `C'206,235,230'`, risco `C'252,215,218'`.
+  - A caixa fica presa no horário do envio e se estende conforme as velas andam.
+  - Enquanto o trade está aberto, a faixa entre a entrada e o preço atual fica **mais forte**: verde no lucro, rosa no prejuízo.
+  - Ordem pendente aparece com as cores claras até ser executada; se for cancelada, a caixa some.
+  - SL/TP alterados (ex.: Breakeven) são refletidos na caixa.
+  - Ao fechar, a caixa fica congelada com o resultado (`FECHADA +xx.xx USD (+x.xxR)`).
+- Novas entradas no grupo **Acompanhamento Após o Envio**: ligar/desligar, cores fortes de lucro/prejuízo, cor da linha de entrada e manter/remover caixas fechadas.
