@@ -1,11 +1,11 @@
-//+------------------------------------------------------------------+
+﻿//+------------------------------------------------------------------+
 //|                                            TradeAssistant_BR.mq5 |
 //|                                  Trade Assistant MT5 - Português |
 //|               Boleta Visual com Caixas de Risco / Ganho no MT5   |
 //+------------------------------------------------------------------+
 #property copyright   "Trade Assistant MT5 - Edição em Português"
 #property link        "https://www.mql5.com"
-#property version     "1.71"
+#property version     "1.80"
 #property description "Boleta com cálculo dinâmico visível nas linhas e painel: Risco, Gain e R:R (tipo 3:1)."
 #property description "Gráfico inicia limpo. Criação de linhas sob demanda com arrasto 100% livre."
 #property description "Envio ao desmarcar as linhas ou ao clicar em Enviar Ordem."
@@ -61,6 +61,7 @@ input ulong          InpMagicNumber        = 88823415;            // Magic Numbe
 input ulong          InpSlippage           = 10;                  // Desvio Máximo (Slippage em pontos)
 input string         InpTradeComment       = "TradeAssistant BR"; // Comentário da Ordem
 input bool           InpPlaySounds         = true;                // Sons de Execução
+input color          InpUIAccent           = C'0,168,255';        // Cor de Destaque do Painel
 
 input group "=== Acompanhamento Após o Envio (Estilo TradingView) ==="
 input bool           InpTrackAfterSend     = true;                // Manter Caixas no Gráfico Após Enviar
@@ -84,6 +85,20 @@ input bool           InpShowInfoAlways     = false;               // Dados Sempr
 #define OBJ_TXT_ENT      "TABR_TXT_ENT"
 #define OBJ_TXT_SL       "TABR_TXT_SL"
 #define PREFIX_TRK       "TABR_TRK_"
+
+//--- Paleta do painel (mesmo padrão do painel TrendLine CheatCode)
+#define UI_BG            C'19,23,31'
+#define UI_CARD          C'27,32,43'
+#define UI_BORDER        C'44,51,66'
+#define UI_OFF           C'38,44,57'
+#define UI_TEXT          C'230,234,240'
+#define UI_MUTED         C'128,138,156'
+#define UI_DARK          C'10,14,20'
+#define UI_SRON          C'255,171,64'
+#define UI_DANGER        C'239,68,68'
+#define UI_BUY           C'38,166,154'
+#define UI_SELL          C'239,83,80'
+#define UI_HDR_H         36
 
 //--- Acompanhamento das ordens enviadas (caixas que ficam no gráfico)
 enum ENUM_TRACK_STATE
@@ -150,7 +165,7 @@ int            g_timer_ticks        = 0;
 // Coordenadas e Dimensões da Boleta
 int            g_panel_x            = 15;
 int            g_panel_y            = 35;
-int            g_panel_w            = 275;
+int            g_panel_w            = 260;
 int            g_panel_h            = 405;
 
 //+------------------------------------------------------------------+
@@ -1179,7 +1194,8 @@ void UpdateTrackers()
 //| Criação dos Controles Gráficos da Boleta (Painel Trade Assistant)|
 //| Garante que o painel fique SOBRE todos os candles e objetos      |
 //+------------------------------------------------------------------+
-void CreateLabel(string name, int x, int y, string text, color clr, int fontsize=8, string font="Segoe UI")
+void CreateLabel(string name, int x, int y, string text, color clr, int fontsize=8, string font="Segoe UI",
+                 ENUM_ANCHOR_POINT anchor=ANCHOR_LEFT_UPPER)
 {
    if(ObjectFind(0, name) < 0)
       ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
@@ -1187,6 +1203,7 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontsize
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_ANCHOR, anchor);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontsize);
@@ -1194,9 +1211,11 @@ void CreateLabel(string name, int x, int y, string text, color clr, int fontsize
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
    ObjectSetInteger(0, name, OBJPROP_ZORDER, 105);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 }
 
-void CreateButton(string name, int x, int y, int w, int h, string text, color bg_clr, color text_clr=clrWhite, int fontsize=8)
+void CreateButton(string name, int x, int y, int w, int h, string text, color bg_clr, color text_clr=clrWhite,
+                  int fontsize=8, color border_clr=clrNONE)
 {
    if(ObjectFind(0, name) < 0)
       ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
@@ -1208,12 +1227,21 @@ void CreateButton(string name, int x, int y, int w, int h, string text, color bg
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg_clr);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, (border_clr == clrNONE) ? bg_clr : border_clr);
    ObjectSetInteger(0, name, OBJPROP_COLOR, text_clr);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontsize);
-   ObjectSetString(0, name, OBJPROP_FONT, "Segoe UI Bold");
+   ObjectSetString(0, name, OBJPROP_FONT, "Segoe UI Semibold");
+   ObjectSetInteger(0, name, OBJPROP_STATE, false);
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
    ObjectSetInteger(0, name, OBJPROP_ZORDER, 105);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//--- Botão "pílula" igual ao painel TrendLine: aceso na cor de destaque, apagado em cinza
+void CreatePill(string name, int x, int y, int w, int h, string text, bool on, color on_clr, int fontsize=7)
+{
+   CreateButton(name, x, y, w, h, text, on ? on_clr : UI_OFF, on ? UI_DARK : UI_MUTED, fontsize, on ? on_clr : UI_BORDER);
 }
 
 void CreateEdit(string name, int x, int y, int w, int h, string text, color bg_clr, color text_clr=clrBlack, int fontsize=8)
@@ -1228,157 +1256,153 @@ void CreateEdit(string name, int x, int y, int w, int h, string text, color bg_c
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg_clr);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, UI_BORDER);
    ObjectSetInteger(0, name, OBJPROP_COLOR, text_clr);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontsize);
-   ObjectSetString(0, name, OBJPROP_FONT, "Segoe UI Bold");
+   ObjectSetString(0, name, OBJPROP_FONT, "Segoe UI Semibold");
    ObjectSetInteger(0, name, OBJPROP_ALIGN, ALIGN_CENTER);
    ObjectSetInteger(0, name, OBJPROP_BACK, false);
    ObjectSetInteger(0, name, OBJPROP_ZORDER, 105);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
 }
 
+void CreateRect(string name, int x, int y, int w, int h, color bg, color border, int zorder=100)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, w);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, h);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, zorder);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+//--- Nome curto do tempo gráfico (M15, H1...)
+string TFShort()
+{
+   string tf = EnumToString((ENUM_TIMEFRAMES)Period());
+   return StringSubstr(tf, 7);
+}
+
+//+------------------------------------------------------------------+
+//| Painel no mesmo padrão visual do painel TrendLine CheatCode      |
+//| (fundo escuro, cartões, botões "pílula" com destaque azul)       |
+//+------------------------------------------------------------------+
 void CreatePanelGUI()
 {
-   // Painel Principal de Fundo
-   string bg_name = PREFIX_GUI + "BG";
-   if(ObjectFind(0, bg_name) < 0)
-      ObjectCreate(0, bg_name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, bg_name, OBJPROP_XDISTANCE, g_panel_x);
-   ObjectSetInteger(0, bg_name, OBJPROP_YDISTANCE, g_panel_y);
-   ObjectSetInteger(0, bg_name, OBJPROP_XSIZE, g_panel_w);
-   ObjectSetInteger(0, bg_name, OBJPROP_YSIZE, g_panel_minimized ? 30 : g_panel_h);
-   ObjectSetInteger(0, bg_name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, bg_name, OBJPROP_BGCOLOR, C'22,132,152');
-   ObjectSetInteger(0, bg_name, OBJPROP_BORDER_COLOR, C'34,153,174');
-   ObjectSetInteger(0, bg_name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, bg_name, OBJPROP_BACK, false);
-   ObjectSetInteger(0, bg_name, OBJPROP_ZORDER, 100);
-   ObjectSetInteger(0, bg_name, OBJPROP_SELECTABLE, false);
+   int X = g_panel_x, Y = g_panel_y, W = g_panel_w;
 
-   // Barra de Cabeçalho
-   string hdr_name = PREFIX_GUI + "HDR";
-   if(ObjectFind(0, hdr_name) < 0)
-      ObjectCreate(0, hdr_name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, hdr_name, OBJPROP_XDISTANCE, g_panel_x);
-   ObjectSetInteger(0, hdr_name, OBJPROP_YDISTANCE, g_panel_y);
-   ObjectSetInteger(0, hdr_name, OBJPROP_XSIZE, g_panel_w);
-   ObjectSetInteger(0, hdr_name, OBJPROP_YSIZE, 26);
-   ObjectSetInteger(0, hdr_name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, hdr_name, OBJPROP_BGCOLOR, C'41,169,194');
-   ObjectSetInteger(0, hdr_name, OBJPROP_BACK, false);
-   ObjectSetInteger(0, hdr_name, OBJPROP_ZORDER, 102);
-   ObjectSetInteger(0, hdr_name, OBJPROP_SELECTABLE, false);
-
-   // Título e Botão Minimizar
-   CreateLabel(PREFIX_GUI + "TITLE", g_panel_x + 8, g_panel_y + 5, "Trade Assistant MT5 [BR]", clrWhite, 9, "Segoe UI Bold");
-   CreateButton(PREFIX_GUI + "BTN_MIN", g_panel_x + g_panel_w - 22, g_panel_y + 3, 18, 20, g_panel_minimized ? "+" : "_", C'50,180,205', clrWhite, 9);
+   //--- Cabeçalho
+   CreateRect(PREFIX_GUI + "HDR", X, Y, W, UI_HDR_H, UI_CARD, UI_BORDER, 100);
+   CreateRect(PREFIX_GUI + "HDR_ACC", X, Y, 3, UI_HDR_H, InpUIAccent, InpUIAccent, 101);
+   CreateLabel(PREFIX_GUI + "TITLE", X + 14, Y + 5, "TRADE ASSISTANT", UI_TEXT, 9, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "INFO_SYM", X + 14, Y + 20, _Symbol + "  ·  " + TFShort() + "  ·  Sp 0", UI_MUTED, 7, "Segoe UI");
+   CreateLabel(PREFIX_GUI + "INFO_TIME", X + W - 36, Y + 11, "00:00:00", UI_TEXT, 9, "Consolas", ANCHOR_RIGHT_UPPER);
+   CreateButton(PREFIX_GUI + "BTN_MIN", X + W - 30, Y + 8, 22, 20, g_panel_minimized ? "+" : "—", UI_OFF, UI_TEXT, 8, UI_BORDER);
 
    if(g_panel_minimized) return;
 
-   int cur_y = g_panel_y + 30;
+   //--- Corpo (altura ajustada no fim)
+   int top = Y + UI_HDR_H;
+   CreateRect(PREFIX_GUI + "BG", X, top, W, 10, UI_BG, UI_BORDER, 99);
+   int y = top + 10;
+   int b2 = (W - 26) / 2;
+   int b3 = (W - 32) / 3;
 
-   // Linha 1: Informações do Símbolo e Horário
-   CreateLabel(PREFIX_GUI + "INFO_SYM", g_panel_x + 8, cur_y, _Symbol + " | Sp: 0", clrWhite, 8, "Segoe UI Bold");
-   CreateLabel(PREFIX_GUI + "INFO_TIME", g_panel_x + 190, cur_y, "00:00:00", clrWhite, 8);
-   cur_y += 18;
+   //--- Cartão da conta: Saldo e Lucro do EA
+   CreateRect(PREFIX_GUI + "CARD_ACC", X + 10, y, W - 20, 42, UI_CARD, UI_BORDER, 102);
+   CreateLabel(PREFIX_GUI + "CAP_BAL", X + 20, y + 6, "SALDO", UI_MUTED, 7, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "INFO_BAL", X + 20, y + 19, "0.00", UI_TEXT, 9, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "CAP_PL", X + W / 2 + 6, y + 6, "LUCRO (EA)", UI_MUTED, 7, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "INFO_PL", X + W / 2 + 6, y + 19, "0.00", UI_TEXT, 9, "Segoe UI Semibold");
+   y += 42 + 10;
 
-   // Linha 2: Métricas de Conta (Saldo e Lucro)
-   CreateLabel(PREFIX_GUI + "INFO_BAL", g_panel_x + 8, cur_y, "Saldo: R$ 0,00", clrWhite, 8);
-   CreateLabel(PREFIX_GUI + "INFO_PL", g_panel_x + 150, cur_y, "Lucro: R$ 0,00", clrYellow, 8, "Segoe UI Bold");
-   cur_y += 22;
+   //--- Direção
+   CreateLabel(PREFIX_GUI + "CAP_DIR", X + 12, y, "DIREÇÃO", UI_MUTED, 7, "Segoe UI Semibold");
+   y += 14;
+   CreatePill(PREFIX_GUI + "BTN_DIR_BUY",  X + 10,      y, b2, 22, "COMPRA (BUY)",  g_dir == DIR_BUY,  UI_BUY, 8);
+   CreatePill(PREFIX_GUI + "BTN_DIR_SELL", X + 16 + b2, y, b2, 22, "VENDA (SELL)",  g_dir == DIR_SELL, UI_SELL, 8);
+   y += 22 + 10;
 
-   // Linha 3: Seletor de Direção [ COMPRA ] e [ VENDA ]
-   int btn_w = (g_panel_w - 18) / 2;
-   CreateButton(PREFIX_GUI + "BTN_DIR_BUY", g_panel_x + 6, cur_y, btn_w, 24, "COMPRA (BUY)",
-                (g_dir == DIR_BUY) ? C'34,177,76' : C'20,95,115', clrWhite, 8);
-   CreateButton(PREFIX_GUI + "BTN_DIR_SELL", g_panel_x + 10 + btn_w, cur_y, btn_w, 24, "VENDA (SELL)",
-                (g_dir == DIR_SELL) ? C'237,28,36' : C'20,95,115', clrWhite, 8);
-   cur_y += 28;
+   //--- Modo de risco
+   CreateLabel(PREFIX_GUI + "CAP_RISK", X + 12, y, "GERENCIAMENTO DE RISCO", UI_MUTED, 7, "Segoe UI Semibold");
+   y += 14;
+   CreatePill(PREFIX_GUI + "BTN_RISK_BAL", X + 10,          y, b3, 20, "% SALDO",  g_risk_mode == RISK_PERCENT_BALANCE, InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RISK_EQ",  X + 16 + b3,     y, b3, 20, "% EQUITY", g_risk_mode == RISK_PERCENT_EQUITY,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RISK_MON", X + 22 + 2 * b3, y, b3, 20, "$ FIXO",   g_risk_mode == RISK_FIXED_MONEY,     InpUIAccent);
+   y += 20 + 8;
 
-   // Linha 4: Modo de Risco [% Saldo] [% Equity] [R$ Fixo]
-   int rbtn_w = (g_panel_w - 20) / 3;
-   CreateButton(PREFIX_GUI + "BTN_RISK_BAL", g_panel_x + 6, cur_y, rbtn_w, 20, "% Saldo",
-                (g_risk_mode == RISK_PERCENT_BALANCE) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_RISK_EQ", g_panel_x + 9 + rbtn_w, cur_y, rbtn_w, 20, "% Equity",
-                (g_risk_mode == RISK_PERCENT_EQUITY) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_RISK_MON", g_panel_x + 12 + (rbtn_w * 2), cur_y, rbtn_w, 20, "$ Fixo",
-                (g_risk_mode == RISK_FIXED_MONEY) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   cur_y += 24;
-
-   // Linha 5: Valor do Risco e Lote Calculado
-   CreateLabel(PREFIX_GUI + "LBL_RISK_VAL", g_panel_x + 6, cur_y + 3, "Risco:", clrWhite, 8);
-   CreateEdit(PREFIX_GUI + "EDT_RISK_VAL", g_panel_x + 50, cur_y, 60, 22, DoubleToString(g_risk_value, 2), clrWhite, clrBlack);
-
-   CreateLabel(PREFIX_GUI + "LBL_CALC_LOT", g_panel_x + 118, cur_y + 3, "Lote:", clrWhite, 8);
-   CreateEdit(PREFIX_GUI + "EDT_CALC_LOT", g_panel_x + 152, cur_y, 62, 22, DoubleToString(g_calc_lot, 2), clrWhite, clrBlack);
+   //--- Risco, Lote e Calc
+   CreateLabel(PREFIX_GUI + "LBL_RISK_VAL", X + 12, y + 5, "Risco", UI_MUTED, 8, "Segoe UI");
+   CreateEdit(PREFIX_GUI + "EDT_RISK_VAL", X + 48, y, 58, 22, DoubleToString(g_risk_value, 2), UI_DARK, UI_TEXT);
+   CreateLabel(PREFIX_GUI + "LBL_CALC_LOT", X + 114, y + 5, "Lote", UI_MUTED, 8, "Segoe UI");
+   CreateEdit(PREFIX_GUI + "EDT_CALC_LOT", X + 144, y, 60, 22, DoubleToString(g_calc_lot, 2), UI_DARK, UI_TEXT);
    g_lot_shown = g_calc_lot;
-   CreateButton(PREFIX_GUI + "BTN_RECALC", g_panel_x + 220, cur_y, 48, 22, "Calc", C'0,162,232', clrWhite, 8);
-   cur_y += 28;
+   CreateButton(PREFIX_GUI + "BTN_RECALC", X + 210, y, W - 220, 22, "CALC", InpUIAccent, UI_DARK, 7);
+   y += 22 + 8;
 
-   // Linha 6: Relação Risco:Retorno (RR)
-   CreateLabel(PREFIX_GUI + "LBL_RR", g_panel_x + 6, cur_y + 3, "Relacao RR:", clrWhite, 8);
-   int rr_w = 36;
-   CreateButton(PREFIX_GUI + "BTN_RR_1_1", g_panel_x + 88, cur_y, rr_w, 20, "1:1",
-                (g_rr_ratio == RR_1_1) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_RR_2_1", g_panel_x + 128, cur_y, rr_w, 20, "2:1",
-                (g_rr_ratio == RR_2_1) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_RR_3_1", g_panel_x + 168, cur_y, rr_w, 20, "3:1",
-                (g_rr_ratio == RR_3_1) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_RR_FREE", g_panel_x + 208, cur_y, 58, 20, "Livre",
-                (g_rr_ratio == RR_FREE) ? C'0,162,232' : C'20,95,115', clrWhite, 7);
-   cur_y += 26;
+   //--- Relação Risco:Retorno
+   CreateLabel(PREFIX_GUI + "LBL_RR", X + 12, y + 4, "R:R", UI_MUTED, 8, "Segoe UI");
+   int rr_w = (W - 10 - 48 - 12) / 4;
+   CreatePill(PREFIX_GUI + "BTN_RR_1_1",  X + 48,                  y, rr_w, 20, "1:1",   g_rr_ratio == RR_1_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_2_1",  X + 48 + (rr_w + 4),     y, rr_w, 20, "2:1",   g_rr_ratio == RR_2_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_3_1",  X + 48 + (rr_w + 4) * 2, y, rr_w, 20, "3:1",   g_rr_ratio == RR_3_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_FREE", X + 48 + (rr_w + 4) * 3, y, rr_w, 20, "LIVRE", g_rr_ratio == RR_FREE, InpUIAccent);
+   y += 20 + 10;
 
-   // Linha 8: BOTÃO PRINCIPAL: CRIAR LINHAS NO GRÁFICO (Sob Demanda)
-   CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", g_panel_x + 6, cur_y, btn_w, 26,
-                g_lines_active ? "REMOVER LINHAS" : "+ CRIAR LINHAS",
-                g_lines_active ? C'180,50,50' : C'0,160,160', clrWhite, 8);
+   //--- Divisória
+   CreateRect(PREFIX_GUI + "DIV1", X + 10, y, W - 20, 1, UI_BORDER, UI_BORDER, 102);
+   y += 9;
 
-   CreateButton(PREFIX_GUI + "BTN_TOGGLE_AUTOSEND", g_panel_x + 10 + btn_w, cur_y, btn_w, 26,
-                g_auto_send ? "Auto-Envio [LIG.]" : "Auto-Envio [OFF]",
-                g_auto_send ? C'34,177,76' : C'180,90,40', clrWhite, 8);
-   cur_y += 32;
+   //--- Linhas no gráfico e Auto-envio
+   if(g_lines_active)
+      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 24, "REMOVER LINHAS", UI_DANGER, clrWhite, 7);
+   else
+      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 24, "+ CRIAR LINHAS", InpUIAccent, UI_DARK, 7);
+   CreatePill(PREFIX_GUI + "BTN_TOGGLE_AUTOSEND", X + 16 + b2, y, b2, 24,
+              g_auto_send ? "AUTO-ENVIO: ON" : "AUTO-ENVIO: OFF", g_auto_send, UI_SRON);
+   y += 24 + 6;
 
-   // Linha 9: Botões de Compra / Venda a Mercado
-   CreateButton(PREFIX_GUI + "BTN_MKT_BUY", g_panel_x + 6, cur_y, btn_w, 36, "COMPRAR\nMercado", C'34,177,76', clrWhite, 8);
-   CreateButton(PREFIX_GUI + "BTN_MKT_SELL", g_panel_x + 10 + btn_w, cur_y, btn_w, 36, "VENDER\nMercado", C'237,28,36', clrWhite, 8);
-   cur_y += 42;
+   //--- Compra / Venda a mercado
+   CreateButton(PREFIX_GUI + "BTN_MKT_BUY",  X + 10,      y, b2, 30, "COMPRAR", UI_BUY,  clrWhite, 8);
+   CreateButton(PREFIX_GUI + "BTN_MKT_SELL", X + 16 + b2, y, b2, 30, "VENDER",  UI_SELL, clrWhite, 8);
+   y += 30 + 6;
 
-   // Linha 10: Botão de ENVIAR ORDEM (Quando o usuário clica ou após soltar)
-   CreateButton(PREFIX_GUI + "BTN_EXEC_LINES", g_panel_x + 6, cur_y, g_panel_w - 12, 30, "ENVIAR ORDEM DAS LINHAS", C'0,140,210', clrWhite, 9);
-   cur_y += 36;
+   //--- Enviar ordem das linhas
+   CreateButton(PREFIX_GUI + "BTN_EXEC_LINES", X + 10, y, W - 20, 26, "ENVIAR ORDEM DAS LINHAS", InpUIAccent, UI_DARK, 8);
+   y += 26 + 6;
 
-   // Linha 11: Gestão Rápida (Breakeven, Fechar 50%, Fechar Tudo)
-   int mg_w = (g_panel_w - 20) / 3;
-   CreateButton(PREFIX_GUI + "BTN_BE", g_panel_x + 6, cur_y, mg_w, 24, "Breakeven", C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_CLOSE_HALF", g_panel_x + 9 + mg_w, cur_y, mg_w, 24, "Fechar 50%", C'20,95,115', clrWhite, 7);
-   CreateButton(PREFIX_GUI + "BTN_CLOSE_ALL", g_panel_x + 12 + (mg_w * 2), cur_y, mg_w, 24, "Fechar Tudo", C'180,40,40', clrWhite, 7);
-   cur_y += 30;
+   //--- Gestão rápida
+   CreateButton(PREFIX_GUI + "BTN_BE",         X + 10,          y, b3, 22, "BREAKEVEN",   UI_OFF,    UI_TEXT,  7, UI_BORDER);
+   CreateButton(PREFIX_GUI + "BTN_CLOSE_HALF", X + 16 + b3,     y, b3, 22, "FECHAR 50%",  UI_OFF,    UI_TEXT,  7, UI_BORDER);
+   CreateButton(PREFIX_GUI + "BTN_CLOSE_ALL",  X + 22 + 2 * b3, y, b3, 22, "FECHAR TUDO", UI_DANGER, clrWhite, 7);
+   y += 22 + 10;
 
-   // Linha 11: Painel de Valores Dinâmicos (Stop, Gain e Risco:Gain) - Fim do Painel (Stop, Gain e Risco:Gain 3:1)
-   string box_rr_name = PREFIX_GUI + "BOX_RR";
-   if(ObjectFind(0, box_rr_name) < 0)
-      ObjectCreate(0, box_rr_name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_XDISTANCE, g_panel_x + 6);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_YDISTANCE, cur_y);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_XSIZE, g_panel_w - 12);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_YSIZE, 46);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_BGCOLOR, C'14,68,78');
-   ObjectSetInteger(0, box_rr_name, OBJPROP_BORDER_COLOR, C'0,180,200');
-   ObjectSetInteger(0, box_rr_name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_BACK, false);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_ZORDER, 103);
-   ObjectSetInteger(0, box_rr_name, OBJPROP_SELECTABLE, false);
+   //--- Cartão de valores: Gain, Stop e Risco:Retorno
+   CreateRect(PREFIX_GUI + "BOX_RR", X + 10, y, W - 20, 52, UI_CARD, UI_BORDER, 102);
+   CreateRect(PREFIX_GUI + "BOX_RR_ACC", X + 10, y, 3, 52, InpUIAccent, InpUIAccent, 103);
+   CreateLabel(PREFIX_GUI + "LBL_GAIN_VAL", X + 20, y + 5,  "GAIN: +0.00 (+0.00%) | 0 pts", UI_BUY,  8, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "LBL_STOP_VAL", X + 20, y + 20, "STOP: -0.00 (-0.00%) | 0 pts", UI_SELL, 8, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "LBL_RR_VAL",   X + 20, y + 35, "RISCO / GAIN: 0.00:1",         UI_TEXT, 8, "Segoe UI Semibold");
+   y += 52 + 8;
 
-   CreateLabel(PREFIX_GUI + "LBL_GAIN_VAL", g_panel_x + 10, cur_y + 4, "GAIN: +R$ 0,00 (+0.0%) | 0 pts", C'160,255,160', 8, "Segoe UI Bold");
-   CreateLabel(PREFIX_GUI + "LBL_STOP_VAL", g_panel_x + 10, cur_y + 18, "STOP: -R$ 0,00 (-0.0%) | 0 pts", C'255,170,170', 8, "Segoe UI Bold");
-   CreateLabel(PREFIX_GUI + "LBL_RR_VAL",   g_panel_x + 10, cur_y + 31, "RISCO / GAIN: 3.0:1", clrYellow, 8, "Segoe UI Bold");
-   cur_y += 52;
-
-
-   // Linha de Rodapé: Status
+   //--- Status
    string st_msg = g_lines_active ? "Arraste as linhas livremente! Desmarque p/ enviar." : "Clique em [+ CRIAR LINHAS] para iniciar.";
-   CreateLabel(PREFIX_GUI + "STATUS_LBL", g_panel_x + 6, cur_y, st_msg, clrYellow, 7);
+   CreateLabel(PREFIX_GUI + "STATUS_LBL", X + 12, y, st_msg, UI_MUTED, 7, "Segoe UI");
+   y += 18;
+
+   ObjectSetInteger(0, PREFIX_GUI + "BG", OBJPROP_YSIZE, y - top);
+   g_panel_h = y - Y;
 }
 
 //+------------------------------------------------------------------+
@@ -1397,7 +1421,7 @@ void UpdatePanelInfo()
    if(g_panel_minimized) return;
 
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   ObjectSetString(0, PREFIX_GUI + "INFO_SYM", OBJPROP_TEXT, StringFormat("%s | Sp: %d", _Symbol, spread));
+   ObjectSetString(0, PREFIX_GUI + "INFO_SYM", OBJPROP_TEXT, StringFormat("%s  ·  %s  ·  Sp %d", _Symbol, TFShort(), spread));
 
    MqlDateTime dt;
    TimeCurrent(dt);
@@ -1416,16 +1440,16 @@ void UpdatePanelInfo()
    }
    string curr    = AccountInfoString(ACCOUNT_CURRENCY);
 
-   ObjectSetString(0, PREFIX_GUI + "INFO_BAL", OBJPROP_TEXT, StringFormat("Saldo: %.2f %s", balance, curr));
-   ObjectSetString(0, PREFIX_GUI + "INFO_PL", OBJPROP_TEXT, StringFormat("Lucro: %+.2f %s", profit, curr));
-   ObjectSetInteger(0, PREFIX_GUI + "INFO_PL", OBJPROP_COLOR, (profit >= 0) ? clrLime : clrYellow);
+   ObjectSetString(0, PREFIX_GUI + "INFO_BAL", OBJPROP_TEXT, StringFormat("%.2f %s", balance, curr));
+   ObjectSetString(0, PREFIX_GUI + "INFO_PL", OBJPROP_TEXT, StringFormat("%+.2f %s", profit, curr));
+   ObjectSetInteger(0, PREFIX_GUI + "INFO_PL", OBJPROP_COLOR, (profit > 0) ? UI_BUY : (profit < 0) ? UI_SELL : UI_TEXT);
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
 
-   ObjectSetString(0, PREFIX_GUI + "BTN_MKT_BUY", OBJPROP_TEXT, StringFormat("COMPRAR\n%s", DoubleToString(ask, digits)));
-   ObjectSetString(0, PREFIX_GUI + "BTN_MKT_SELL", OBJPROP_TEXT, StringFormat("VENDER\n%s", DoubleToString(bid, digits)));
+   ObjectSetString(0, PREFIX_GUI + "BTN_MKT_BUY", OBJPROP_TEXT, StringFormat("COMPRAR  %s", DoubleToString(ask, digits)));
+   ObjectSetString(0, PREFIX_GUI + "BTN_MKT_SELL", OBJPROP_TEXT, StringFormat("VENDER  %s", DoubleToString(bid, digits)));
 
    // Fonte dos valores do painel:
    //  - Linhas ativas  -> prévia das linhas (recalculada a cada ajuste)

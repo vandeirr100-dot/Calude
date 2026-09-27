@@ -36,6 +36,12 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 
 Boleta visual (`TradeAssistant_BR.mq5`, Expert Advisor) com caixas de Risco/Gain arrastáveis.
 
+## Novidades da versão 1.80
+
+- **Painel no mesmo padrão visual do painel TrendLine CheatCode**: fundo escuro, cabeçalho com barra de destaque, cartões (Saldo / Lucro do EA e Gain / Stop / R:R), botões "pílula" (aceso = cor de destaque, apagado = cinza), compra verde-água e venda vermelha, largura 260 px.
+- Nova entrada `Cor de Destaque do Painel` (padrão azul `C'0,168,255'`, igual ao TrendLine).
+- Arquivo salvo em UTF-8 com BOM para os acentos aparecerem corretamente no MT5.
+
 ## Novidades da versão 1.71
 
 - **Lucro do painel** agora soma só as posições deste EA neste ativo (mesmo valor da coluna "Lucro" da plataforma). Antes somava a conta inteira.
