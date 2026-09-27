@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "Trade Assistant MT5 - Edição em Português"
 #property link        "https://www.mql5.com"
-#property version     "1.80"
+#property version     "2.00"
 #property description "Boleta com cálculo dinâmico visível nas linhas e painel: Risco, Gain e R:R (tipo 3:1)."
 #property description "Gráfico inicia limpo. Criação de linhas sob demanda com arrasto 100% livre."
 #property description "Envio ao desmarcar as linhas ou ao clicar em Enviar Ordem."
@@ -99,6 +99,9 @@ input bool           InpShowInfoAlways     = false;               // Dados Sempr
 #define UI_BUY           C'38,166,154'
 #define UI_SELL          C'239,83,80'
 #define UI_HDR_H         36
+#define UI_ROWALT        C'23,28,37'
+#define UI_GRID_H        20
+#define UI_ROW_H         17
 
 //--- Acompanhamento das ordens enviadas (caixas que ficam no gráfico)
 enum ENUM_TRACK_STATE
@@ -146,6 +149,7 @@ double         g_calc_lot           = 0.01;
 bool           g_lines_active       = false; 
 bool           g_auto_send          = true;
 bool           g_panel_minimized    = false;
+int            g_panel_pos          = 0;      // 0 = sup. esq., 1 = sup. dir., 2 = inf. esq., 3 = inf. dir.
 
 // Coordenadas das Linhas
 double         g_entry_price        = 0.0;
@@ -166,7 +170,6 @@ int            g_timer_ticks        = 0;
 int            g_panel_x            = 15;
 int            g_panel_y            = 35;
 int            g_panel_w            = 260;
-int            g_panel_h            = 405;
 
 //+------------------------------------------------------------------+
 //| Protótipos de Funções Auxiliares                                 |
@@ -231,6 +234,9 @@ int OnInit()
    g_entry_price = NormalizeDouble(ask, digits);
    g_sl_price    = NormalizeDouble(ask - default_dist, digits);
    g_tp_price    = NormalizeDouble(ask + (default_dist * 3.0), digits);
+
+   string pos_key = "TABR_POS_" + (string)ChartID();
+   if(GlobalVariableCheck(pos_key)) g_panel_pos = (int)GlobalVariableGet(pos_key) % 4;
 
    CreatePanelGUI();
    RecalculateRiskAndLot();
@@ -671,8 +677,10 @@ int PlaceBadge(string name, string text, color bg, int x_center, int y, bool vis
    int win_w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
    if(win_w <= 0) win_w = 800;
    int x = x_center - bw / 2;
-   int min_x = g_panel_x + g_panel_w + 10;
-   if(x + bw > win_w - 10) x = win_w - bw - 10;
+   bool panel_left = (g_panel_pos == 0 || g_panel_pos == 2);
+   int min_x = panel_left ? g_panel_x + g_panel_w + 10 : 10;
+   int max_x = panel_left ? win_w - 10 : g_panel_x - 10;
+   if(x + bw > max_x) x = max_x - bw;
    if(x < min_x) x = min_x;
 
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -1294,115 +1302,143 @@ string TFShort()
    return StringSubstr(tf, 7);
 }
 
+//--- Altura total do painel (precisa bater com o layout de CreatePanelGUI)
+int PanelHeight()
+{
+   if(g_panel_minimized) return UI_HDR_H;
+   return UI_HDR_H + 10                                  // cabeçalho + respiro
+        + 4 * UI_GRID_H + 3 * 5 + 10                     // grade de configuração
+        + 20 + 5 * UI_ROW_H + 4 + 10                     // cartão RESUMO
+        + 22 + 6 + 24 + 6 + 24 + 6 + 20 + 8              // execução e gestão
+        + 14 + 6;                                        // status
+}
+
+//--- Canto superior esquerdo do painel conforme a posição escolhida (botão POS)
+void PanelOrigin()
+{
+   int cw = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   int ch = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+   bool right  = (g_panel_pos == 1 || g_panel_pos == 3);
+   bool bottom = (g_panel_pos == 2 || g_panel_pos == 3);
+   g_panel_x = right  ? cw - g_panel_w - 15      : 15;
+   g_panel_y = bottom ? ch - PanelHeight() - 15   : 35;
+   if(g_panel_x < 0) g_panel_x = 0;
+   if(g_panel_y < 0) g_panel_y = 0;
+}
+
+//--- Linha de valor (igual às linhas do painel TrendLine): marcador colorido, rótulo à esquerda, valor à direita
+void PanelRow(string key, int X, int y, int W, string label, color dot, bool alt, color val_clr)
+{
+   if(alt) CreateRect(PREFIX_GUI + "ROW_" + key, X + 10, y, W - 20, UI_ROW_H, UI_ROWALT, UI_ROWALT, 103);
+   CreateRect(PREFIX_GUI + "DOT_" + key, X + 14, y + 4, 3, UI_ROW_H - 8, dot, dot, 104);
+   CreateLabel(PREFIX_GUI + "CAP_" + key, X + 24, y + 2, label, UI_MUTED, 7, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + key, X + W - 16, y + 2, "-", val_clr, 8, "Segoe UI Semibold", ANCHOR_RIGHT_UPPER);
+}
+
 //+------------------------------------------------------------------+
-//| Painel no mesmo padrão visual do painel TrendLine CheatCode      |
-//| (fundo escuro, cartões, botões "pílula" com destaque azul)       |
+//| PAINEL (mesmo padrão visual do painel TrendLine CheatCode)       |
+//|                                                                  |
+//|  Cabeçalho ... TRADE ASSISTANT · ativo · TF · spread · relógio   |
+//|  Grade ....... LADO / RISCO / VALOR+LOTE / R:R (rótulo + pílulas)|
+//|  Resumo ...... Gain, Stop, R:R+Lote, L&P do EA, Saldo            |
+//|                (PRÉVIA das linhas ou dados REAIS do trade)       |
+//|  Execução .... Linhas / Auto-envio, Enviar, Mercado, Gestão      |
 //+------------------------------------------------------------------+
 void CreatePanelGUI()
 {
+   PanelOrigin();
    int X = g_panel_x, Y = g_panel_y, W = g_panel_w;
 
-   //--- Cabeçalho
+   //=== Cabeçalho
    CreateRect(PREFIX_GUI + "HDR", X, Y, W, UI_HDR_H, UI_CARD, UI_BORDER, 100);
    CreateRect(PREFIX_GUI + "HDR_ACC", X, Y, 3, UI_HDR_H, InpUIAccent, InpUIAccent, 101);
    CreateLabel(PREFIX_GUI + "TITLE", X + 14, Y + 5, "TRADE ASSISTANT", UI_TEXT, 9, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "INFO_SYM", X + 14, Y + 20, _Symbol + "  ·  " + TFShort() + "  ·  Sp 0", UI_MUTED, 7, "Segoe UI");
-   CreateLabel(PREFIX_GUI + "INFO_TIME", X + W - 36, Y + 11, "00:00:00", UI_TEXT, 9, "Consolas", ANCHOR_RIGHT_UPPER);
+   CreateLabel(PREFIX_GUI + "INFO_SYM", X + 14, Y + 20, _Symbol + "  ·  " + TFShort(), UI_MUTED, 7, "Segoe UI");
+   CreateLabel(PREFIX_GUI + "INFO_TIME", X + W - 66, Y + 7, "--:--:--", UI_MUTED, 7, "Consolas", ANCHOR_RIGHT_UPPER);
+   CreateButton(PREFIX_GUI + "BTN_POS", X + W - 58, Y + 8, 24, 20, "POS", UI_OFF, UI_TEXT, 7, UI_BORDER);
+   ObjectSetString(0, PREFIX_GUI + "BTN_POS", OBJPROP_TOOLTIP, "Mudar o painel de canto");
    CreateButton(PREFIX_GUI + "BTN_MIN", X + W - 30, Y + 8, 22, 20, g_panel_minimized ? "+" : "—", UI_OFF, UI_TEXT, 8, UI_BORDER);
 
    if(g_panel_minimized) return;
 
-   //--- Corpo (altura ajustada no fim)
+   //=== Corpo
    int top = Y + UI_HDR_H;
-   CreateRect(PREFIX_GUI + "BG", X, top, W, 10, UI_BG, UI_BORDER, 99);
-   int y = top + 10;
+   CreateRect(PREFIX_GUI + "BG", X, top, W, PanelHeight() - UI_HDR_H, UI_BG, UI_BORDER, 99);
+   int y  = top + 10;
+   int cx = X + 58;                 // início dos controles (coluna de rótulos à esquerda)
+   int cw = W - 10 - 58;            // largura útil dos controles
+   int p2 = (cw - 6) / 2;
+   int p3 = (cw - 12) / 3;
+   int p4 = (cw - 18) / 4;
+
+   //--- Grade de configuração
+   CreateLabel(PREFIX_GUI + "CAP_DIR", X + 14, y + 5, "LADO", UI_MUTED, 7, "Segoe UI Semibold");
+   CreatePill(PREFIX_GUI + "BTN_DIR_BUY",  cx,          y, p2, UI_GRID_H, "COMPRA", g_dir == DIR_BUY,  UI_BUY);
+   CreatePill(PREFIX_GUI + "BTN_DIR_SELL", cx + p2 + 6, y, p2, UI_GRID_H, "VENDA",  g_dir == DIR_SELL, UI_SELL);
+   y += UI_GRID_H + 5;
+
+   CreateLabel(PREFIX_GUI + "CAP_RISK", X + 14, y + 5, "RISCO", UI_MUTED, 7, "Segoe UI Semibold");
+   CreatePill(PREFIX_GUI + "BTN_RISK_BAL", cx,                y, p3, UI_GRID_H, "% SALDO",  g_risk_mode == RISK_PERCENT_BALANCE, InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RISK_EQ",  cx + (p3 + 6),     y, p3, UI_GRID_H, "% EQUITY", g_risk_mode == RISK_PERCENT_EQUITY,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RISK_MON", cx + (p3 + 6) * 2, y, p3, UI_GRID_H, "$ FIXO",   g_risk_mode == RISK_FIXED_MONEY,     InpUIAccent);
+   y += UI_GRID_H + 5;
+
+   CreateLabel(PREFIX_GUI + "LBL_RISK_VAL", X + 14, y + 5, "VALOR", UI_MUTED, 7, "Segoe UI Semibold");
+   CreateEdit(PREFIX_GUI + "EDT_RISK_VAL", cx, y, p3, UI_GRID_H, DoubleToString(g_risk_value, 2), UI_DARK, UI_TEXT);
+   CreateLabel(PREFIX_GUI + "LBL_CALC_LOT", cx + p3 + 6 + p3 / 2, y + 5, "LOTE", UI_MUTED, 7, "Segoe UI Semibold", ANCHOR_UPPER);
+   CreateEdit(PREFIX_GUI + "EDT_CALC_LOT", cx + (p3 + 6) * 2, y, p3, UI_GRID_H, DoubleToString(g_calc_lot, 2), UI_DARK, UI_TEXT);
+   g_lot_shown = g_calc_lot;
+   y += UI_GRID_H + 5;
+
+   CreateLabel(PREFIX_GUI + "LBL_RR", X + 14, y + 5, "R:R", UI_MUTED, 7, "Segoe UI Semibold");
+   CreatePill(PREFIX_GUI + "BTN_RR_1_1",  cx,                y, p4, UI_GRID_H, "1:1",   g_rr_ratio == RR_1_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_2_1",  cx + (p4 + 6),     y, p4, UI_GRID_H, "2:1",   g_rr_ratio == RR_2_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_3_1",  cx + (p4 + 6) * 2, y, p4, UI_GRID_H, "3:1",   g_rr_ratio == RR_3_1,  InpUIAccent);
+   CreatePill(PREFIX_GUI + "BTN_RR_FREE", cx + (p4 + 6) * 3, y, p4, UI_GRID_H, "LIVRE", g_rr_ratio == RR_FREE, InpUIAccent);
+   y += UI_GRID_H + 10;
+
+   //--- Cartão RESUMO
+   int card_h = 20 + 5 * UI_ROW_H + 4;
+   CreateRect(PREFIX_GUI + "BOX_RR", X + 10, y, W - 20, card_h, UI_CARD, UI_BORDER, 102);
+   CreateLabel(PREFIX_GUI + "CAP_RES", X + 18, y + 5, "RESUMO", UI_MUTED, 7, "Segoe UI Semibold");
+   CreateLabel(PREFIX_GUI + "RES_TAG", X + W - 16, y + 5, "PRÉVIA", InpUIAccent, 7, "Segoe UI Semibold", ANCHOR_RIGHT_UPPER);
+   int ry = y + 20;
+   PanelRow("LBL_GAIN_VAL", X, ry, W, "GAIN",   UI_BUY,      true,  UI_BUY);  ry += UI_ROW_H;
+   PanelRow("LBL_STOP_VAL", X, ry, W, "STOP",   UI_SELL,     false, UI_SELL); ry += UI_ROW_H;
+   PanelRow("LBL_RR_VAL",   X, ry, W, "R:R",    InpUIAccent, true,  UI_TEXT); ry += UI_ROW_H;
+   PanelRow("INFO_PL",      X, ry, W, "L&P EA", UI_SRON,     false, UI_TEXT); ry += UI_ROW_H;
+   PanelRow("INFO_BAL",     X, ry, W, "SALDO",  UI_BORDER,   true,  UI_TEXT);
+   y += card_h + 10;
+
+   //--- Execução
    int b2 = (W - 26) / 2;
    int b3 = (W - 32) / 3;
-
-   //--- Cartão da conta: Saldo e Lucro do EA
-   CreateRect(PREFIX_GUI + "CARD_ACC", X + 10, y, W - 20, 42, UI_CARD, UI_BORDER, 102);
-   CreateLabel(PREFIX_GUI + "CAP_BAL", X + 20, y + 6, "SALDO", UI_MUTED, 7, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "INFO_BAL", X + 20, y + 19, "0.00", UI_TEXT, 9, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "CAP_PL", X + W / 2 + 6, y + 6, "LUCRO (EA)", UI_MUTED, 7, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "INFO_PL", X + W / 2 + 6, y + 19, "0.00", UI_TEXT, 9, "Segoe UI Semibold");
-   y += 42 + 10;
-
-   //--- Direção
-   CreateLabel(PREFIX_GUI + "CAP_DIR", X + 12, y, "DIREÇÃO", UI_MUTED, 7, "Segoe UI Semibold");
-   y += 14;
-   CreatePill(PREFIX_GUI + "BTN_DIR_BUY",  X + 10,      y, b2, 22, "COMPRA (BUY)",  g_dir == DIR_BUY,  UI_BUY, 8);
-   CreatePill(PREFIX_GUI + "BTN_DIR_SELL", X + 16 + b2, y, b2, 22, "VENDA (SELL)",  g_dir == DIR_SELL, UI_SELL, 8);
-   y += 22 + 10;
-
-   //--- Modo de risco
-   CreateLabel(PREFIX_GUI + "CAP_RISK", X + 12, y, "GERENCIAMENTO DE RISCO", UI_MUTED, 7, "Segoe UI Semibold");
-   y += 14;
-   CreatePill(PREFIX_GUI + "BTN_RISK_BAL", X + 10,          y, b3, 20, "% SALDO",  g_risk_mode == RISK_PERCENT_BALANCE, InpUIAccent);
-   CreatePill(PREFIX_GUI + "BTN_RISK_EQ",  X + 16 + b3,     y, b3, 20, "% EQUITY", g_risk_mode == RISK_PERCENT_EQUITY,  InpUIAccent);
-   CreatePill(PREFIX_GUI + "BTN_RISK_MON", X + 22 + 2 * b3, y, b3, 20, "$ FIXO",   g_risk_mode == RISK_FIXED_MONEY,     InpUIAccent);
-   y += 20 + 8;
-
-   //--- Risco, Lote e Calc
-   CreateLabel(PREFIX_GUI + "LBL_RISK_VAL", X + 12, y + 5, "Risco", UI_MUTED, 8, "Segoe UI");
-   CreateEdit(PREFIX_GUI + "EDT_RISK_VAL", X + 48, y, 58, 22, DoubleToString(g_risk_value, 2), UI_DARK, UI_TEXT);
-   CreateLabel(PREFIX_GUI + "LBL_CALC_LOT", X + 114, y + 5, "Lote", UI_MUTED, 8, "Segoe UI");
-   CreateEdit(PREFIX_GUI + "EDT_CALC_LOT", X + 144, y, 60, 22, DoubleToString(g_calc_lot, 2), UI_DARK, UI_TEXT);
-   g_lot_shown = g_calc_lot;
-   CreateButton(PREFIX_GUI + "BTN_RECALC", X + 210, y, W - 220, 22, "CALC", InpUIAccent, UI_DARK, 7);
-   y += 22 + 8;
-
-   //--- Relação Risco:Retorno
-   CreateLabel(PREFIX_GUI + "LBL_RR", X + 12, y + 4, "R:R", UI_MUTED, 8, "Segoe UI");
-   int rr_w = (W - 10 - 48 - 12) / 4;
-   CreatePill(PREFIX_GUI + "BTN_RR_1_1",  X + 48,                  y, rr_w, 20, "1:1",   g_rr_ratio == RR_1_1,  InpUIAccent);
-   CreatePill(PREFIX_GUI + "BTN_RR_2_1",  X + 48 + (rr_w + 4),     y, rr_w, 20, "2:1",   g_rr_ratio == RR_2_1,  InpUIAccent);
-   CreatePill(PREFIX_GUI + "BTN_RR_3_1",  X + 48 + (rr_w + 4) * 2, y, rr_w, 20, "3:1",   g_rr_ratio == RR_3_1,  InpUIAccent);
-   CreatePill(PREFIX_GUI + "BTN_RR_FREE", X + 48 + (rr_w + 4) * 3, y, rr_w, 20, "LIVRE", g_rr_ratio == RR_FREE, InpUIAccent);
-   y += 20 + 10;
-
-   //--- Divisória
-   CreateRect(PREFIX_GUI + "DIV1", X + 10, y, W - 20, 1, UI_BORDER, UI_BORDER, 102);
-   y += 9;
-
-   //--- Linhas no gráfico e Auto-envio
    if(g_lines_active)
-      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 24, "REMOVER LINHAS", UI_DANGER, clrWhite, 7);
+      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 22, "REMOVER LINHAS", UI_DANGER, clrWhite, 7);
    else
-      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 24, "+ CRIAR LINHAS", InpUIAccent, UI_DARK, 7);
-   CreatePill(PREFIX_GUI + "BTN_TOGGLE_AUTOSEND", X + 16 + b2, y, b2, 24,
-              g_auto_send ? "AUTO-ENVIO: ON" : "AUTO-ENVIO: OFF", g_auto_send, UI_SRON);
+      CreateButton(PREFIX_GUI + "BTN_TOGGLE_LINES", X + 10, y, b2, 22, "+ CRIAR LINHAS", InpUIAccent, UI_DARK, 7);
+   CreatePill(PREFIX_GUI + "BTN_TOGGLE_AUTOSEND", X + 16 + b2, y, b2, 22,
+              g_auto_send ? "AUTO-ENVIO  ON" : "AUTO-ENVIO  OFF", g_auto_send, UI_SRON);
+   y += 22 + 6;
+
+   // Enviar ordem das linhas: só "acende" quando há linhas no gráfico
+   CreateButton(PREFIX_GUI + "BTN_EXEC_LINES", X + 10, y, W - 20, 24, "ENVIAR ORDEM DAS LINHAS",
+                g_lines_active ? InpUIAccent : UI_OFF, g_lines_active ? UI_DARK : UI_MUTED, 8,
+                g_lines_active ? InpUIAccent : UI_BORDER);
    y += 24 + 6;
 
-   //--- Compra / Venda a mercado
-   CreateButton(PREFIX_GUI + "BTN_MKT_BUY",  X + 10,      y, b2, 30, "COMPRAR", UI_BUY,  clrWhite, 8);
-   CreateButton(PREFIX_GUI + "BTN_MKT_SELL", X + 16 + b2, y, b2, 30, "VENDER",  UI_SELL, clrWhite, 8);
-   y += 30 + 6;
+   CreateButton(PREFIX_GUI + "BTN_MKT_BUY",  X + 10,      y, b2, 24, "COMPRAR", UI_BUY,  clrWhite, 8);
+   CreateButton(PREFIX_GUI + "BTN_MKT_SELL", X + 16 + b2, y, b2, 24, "VENDER",  UI_SELL, clrWhite, 8);
+   y += 24 + 6;
 
-   //--- Enviar ordem das linhas
-   CreateButton(PREFIX_GUI + "BTN_EXEC_LINES", X + 10, y, W - 20, 26, "ENVIAR ORDEM DAS LINHAS", InpUIAccent, UI_DARK, 8);
-   y += 26 + 6;
-
-   //--- Gestão rápida
-   CreateButton(PREFIX_GUI + "BTN_BE",         X + 10,          y, b3, 22, "BREAKEVEN",   UI_OFF,    UI_TEXT,  7, UI_BORDER);
-   CreateButton(PREFIX_GUI + "BTN_CLOSE_HALF", X + 16 + b3,     y, b3, 22, "FECHAR 50%",  UI_OFF,    UI_TEXT,  7, UI_BORDER);
-   CreateButton(PREFIX_GUI + "BTN_CLOSE_ALL",  X + 22 + 2 * b3, y, b3, 22, "FECHAR TUDO", UI_DANGER, clrWhite, 7);
-   y += 22 + 10;
-
-   //--- Cartão de valores: Gain, Stop e Risco:Retorno
-   CreateRect(PREFIX_GUI + "BOX_RR", X + 10, y, W - 20, 52, UI_CARD, UI_BORDER, 102);
-   CreateRect(PREFIX_GUI + "BOX_RR_ACC", X + 10, y, 3, 52, InpUIAccent, InpUIAccent, 103);
-   CreateLabel(PREFIX_GUI + "LBL_GAIN_VAL", X + 20, y + 5,  "GAIN: +0.00 (+0.00%) | 0 pts", UI_BUY,  8, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "LBL_STOP_VAL", X + 20, y + 20, "STOP: -0.00 (-0.00%) | 0 pts", UI_SELL, 8, "Segoe UI Semibold");
-   CreateLabel(PREFIX_GUI + "LBL_RR_VAL",   X + 20, y + 35, "RISCO / GAIN: 0.00:1",         UI_TEXT, 8, "Segoe UI Semibold");
-   y += 52 + 8;
+   CreateButton(PREFIX_GUI + "BTN_BE",         X + 10,          y, b3, 20, "BREAKEVEN",   UI_OFF, UI_TEXT, 7, UI_BORDER);
+   CreateButton(PREFIX_GUI + "BTN_CLOSE_HALF", X + 16 + b3,     y, b3, 20, "FECHAR 50%",  UI_OFF, UI_TEXT, 7, UI_BORDER);
+   CreateButton(PREFIX_GUI + "BTN_CLOSE_ALL",  X + 22 + 2 * b3, y, b3, 20, "FECHAR TUDO", UI_OFF, UI_DANGER, 7, UI_DANGER);
+   y += 20 + 8;
 
    //--- Status
-   string st_msg = g_lines_active ? "Arraste as linhas livremente! Desmarque p/ enviar." : "Clique em [+ CRIAR LINHAS] para iniciar.";
-   CreateLabel(PREFIX_GUI + "STATUS_LBL", X + 12, y, st_msg, UI_MUTED, 7, "Segoe UI");
-   y += 18;
-
-   ObjectSetInteger(0, PREFIX_GUI + "BG", OBJPROP_YSIZE, y - top);
-   g_panel_h = y - Y;
+   string st_msg = g_lines_active ? "Arraste as linhas. Desmarque para enviar." : "Clique em + CRIAR LINHAS para iniciar.";
+   CreateLabel(PREFIX_GUI + "STATUS_LBL", X + 14, y, st_msg, UI_MUTED, 7, "Segoe UI");
 }
 
 //+------------------------------------------------------------------+
@@ -1475,7 +1511,7 @@ void UpdatePanelInfo()
          src_tp    = g_tracks[i].tp;
          src_lot   = g_tracks[i].volume;
          src_pl    = g_tracks[i].result_money;
-         src_title = (g_tracks[i].state == TRK_OPEN) ? "ABERTO" : "PENDENTE";
+         src_title = (g_tracks[i].state == TRK_OPEN) ? "TRADE ABERTO" : "ORDEM PENDENTE";
          src_trade = true;
          break;
       }
@@ -1496,15 +1532,17 @@ void UpdatePanelInfo()
 
    // Atualizar seção de destaque no painel: Gain, Stop e Risco/Gain tipo 3:1
    ObjectSetString(0, PREFIX_GUI + "LBL_GAIN_VAL", OBJPROP_TEXT,
-                   StringFormat("GAIN: +%.2f %s (+%.2f%%) | %.0f pts", MathAbs(gain_money), curr, gain_pct, tp_pts));
+                   StringFormat("+%.2f  (+%.2f%%)  %.0f pts", MathAbs(gain_money), gain_pct, tp_pts));
    ObjectSetString(0, PREFIX_GUI + "LBL_STOP_VAL", OBJPROP_TEXT,
-                   StringFormat("STOP: -%.2f %s (-%.2f%%) | %.0f pts", MathAbs(loss_money), curr, risk_pct, sl_pts));
-   if(src_trade)
-      ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
-                      StringFormat("%s L&P %+.2f | Lote %s | RR %.2f", src_title, src_pl, DoubleToString(src_lot, 2), rr_val));
-   else
-      ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
-                      StringFormat("RISCO / GAIN: %.2f:1  (Ganho %.2fx Risco)", rr_val, rr_val));
+                   StringFormat("-%.2f  (-%.2f%%)  %.0f pts", MathAbs(loss_money), risk_pct, sl_pts));
+   ObjectSetString(0, PREFIX_GUI + "LBL_RR_VAL", OBJPROP_TEXT,
+                   StringFormat("%.2f : 1   ·   Lote %s", rr_val, DoubleToString(src_lot, 2)));
+
+   // Etiqueta do resumo: de onde vêm os números
+   string tag     = src_trade ? src_title : (g_lines_active ? "PRÉVIA DAS LINHAS" : "PRÉVIA");
+   color  tag_clr = !src_trade ? InpUIAccent : (src_title == "TRADE ABERTO" ? UI_BUY : UI_SRON);
+   ObjectSetString(0, PREFIX_GUI + "RES_TAG", OBJPROP_TEXT, tag);
+   ObjectSetInteger(0, PREFIX_GUI + "RES_TAG", OBJPROP_COLOR, tag_clr);
 
    // Só reescreve o campo de lote quando o valor mudou (não atrapalha a digitação)
    if(MathAbs(g_calc_lot - g_lot_shown) > 1e-10)
@@ -1833,6 +1871,16 @@ void OnChartEvent(const int id,
    // 2. Eventos de Redimensionamento / Scroll do Gráfico
    if(id == CHARTEVENT_CHART_CHANGE)
    {
+      // Painel em canto direito/inferior acompanha o redimensionamento do gráfico
+      int old_x = g_panel_x, old_y = g_panel_y;
+      PanelOrigin();
+      if(old_x != g_panel_x || old_y != g_panel_y)
+      {
+         DestroyPanelGUI();
+         CreatePanelGUI();
+         UpdatePanelInfo();
+      }
+
       if(g_lines_active && !g_is_dragging)
          UpdateChartVisuals("");
       DrawAllTracks();
@@ -1868,6 +1916,18 @@ void OnChartEvent(const int id,
    // 4. Clique em Botões da Boleta
    if(id == CHARTEVENT_OBJECT_CLICK)
    {
+      if(sparam == PREFIX_GUI + "BTN_POS")
+      {
+         g_panel_pos = (g_panel_pos + 1) % 4;
+         GlobalVariableSet("TABR_POS_" + (string)ChartID(), g_panel_pos);
+         DestroyPanelGUI();
+         CreatePanelGUI();
+         UpdatePanelInfo();
+         if(g_lines_active) UpdateChartVisuals("");
+         ChartRedraw();
+         return;
+      }
+
       if(sparam == PREFIX_GUI + "BTN_MIN")
       {
          g_panel_minimized = !g_panel_minimized;
