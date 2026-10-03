@@ -9,6 +9,7 @@ import numpy as np
 
 from ..utils import media
 from ..utils import segments as segutil
+from ..utils.aio import run_coroutine
 from ..utils.paths import cache_dir, find_binary, work_dir
 from ..utils.voices import pick_voice, voice_combo
 
@@ -24,21 +25,16 @@ def _synth_edge(text, voice, out_mp3, rate_pct, volume_pct, pitch_hz):
     volume = "%+d%%" % int(volume_pct)
     pitch = "%+dHz" % int(pitch_hz)
     try:
-        import asyncio
-
         import edge_tts  # type: ignore
 
-        async def _go():
+        def _go():
             comm = edge_tts.Communicate(
                 text, voice, rate=rate, volume=volume, pitch=pitch
             )
-            await comm.save(out_mp3)
+            return comm.save(out_mp3)
 
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_go())
-        finally:
-            loop.close()
+        # numa thread propria: o ComfyUI pode ja estar rodando um event loop
+        run_coroutine(_go, timeout=300)
         return out_mp3
     except ImportError:
         exe = find_binary("edge-tts")

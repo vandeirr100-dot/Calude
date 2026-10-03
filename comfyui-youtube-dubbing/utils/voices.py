@@ -161,14 +161,11 @@ def refresh_dynamic_voices(timeout=20):
         return _DYNAMIC["voices"]
     voices = []
     try:
-        import asyncio
-
         import edge_tts  # type: ignore
 
-        async def _fetch():
-            return await edge_tts.list_voices()
+        from .aio import run_coroutine
 
-        data = asyncio.new_event_loop().run_until_complete(_fetch())
+        data = run_coroutine(edge_tts.list_voices, timeout=timeout)
         voices = [v["ShortName"] for v in data]
     except Exception:
         try:
