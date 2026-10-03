@@ -4,7 +4,7 @@ import json
 import os
 
 from ..utils import segments as segutil
-from ..utils.paths import cache_dir
+from ..utils.paths import cache_dir, whisper_models_dir
 from ..utils.voices import ASR_LANGUAGES
 
 _MODEL_CACHE = {}
@@ -39,18 +39,92 @@ def _pick_compute(choice, device):
     return "float16" if device == "cuda" else "int8"
 
 
-def _load_faster_whisper(model_name, device, compute_type):
-    key = (model_name, device, compute_type)
+def _repo_for(model_name):
+    """Repositorio no Hugging Face correspondente ao modelo, quando conhecido."""
+    try:
+        from faster_whisper import utils as fw_utils  # type: ignore
+
+        return getattr(fw_utils, "_MODELS", {}).get(model_name)
+    except Exception:
+        return None
+
+
+def _download_hint(model_name, error):
+    """Mensagem acionavel para falhas de rede/TLS ao buscar o modelo."""
+    text = str(error)
+    repo = _repo_for(model_name)
+    destino = os.path.join(whisper_models_dir(), "models--" + (repo or "").replace("/", "--"))
+
+    linhas = ["Nao foi possivel baixar o modelo '%s' do Hugging Face." % model_name]
+
+    if "CERTIFICATE_VERIFY_FAILED" in text or "self-signed certificate" in text:
+        linhas += [
+            "",
+            "Causa: a conexao HTTPS esta sendo interceptada (antivirus com 'varredura HTTPS'",
+            "ligada - Kaspersky, ESET, Avast, Bitdefender - ou proxy/firewall da rede).",
+            "",
+            "Como resolver, da opcao mais simples para a mais tecnica:",
+            "  1. Desligue a varredura HTTPS/SSL do antivirus, baixe o modelo uma vez e",
+            "     ligue de volta. O modelo fica salvo e nao sera baixado de novo.",
+            "  2. Baixe o modelo pelo navegador e use 'caminho_do_modelo':",
+        ]
+        if repo:
+            linhas.append("     https://huggingface.co/%s/tree/main" % repo)
+            linhas.append(
+                "     Salve os arquivos numa pasta e aponte 'caminho_do_modelo' para ela."
+            )
+        linhas += [
+            "  3. Aponte a variavel de ambiente SSL_CERT_FILE (ou REQUESTS_CA_BUNDLE) para o",
+            "     certificado raiz do seu antivirus/proxy antes de iniciar o ComfyUI.",
+        ]
+    else:
+        linhas += [
+            "",
+            "Verifique a conexao com a internet. Se estiver sem rede, baixe o modelo em outra",
+            "maquina e use o campo 'caminho_do_modelo'.",
+        ]
+        if repo:
+            linhas.append("Repositorio: https://huggingface.co/%s" % repo)
+
+    linhas += ["", "Pasta dos modelos: %s" % whisper_models_dir(), "", "Erro original: %s" % text]
+    return "\n".join(linhas)
+
+
+def _load_faster_whisper(model_name, device, compute_type, model_path=""):
+    source = (model_path or "").strip() or model_name
+    key = (source, device, compute_type)
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key]
     from faster_whisper import WhisperModel  # type: ignore
 
-    model = WhisperModel(
-        model_name,
-        device=device,
-        compute_type=compute_type,
-        download_root=os.path.join(cache_dir(), "whisper"),
-    )
+    if model_path and not os.path.isdir(source):
+        raise RuntimeError(
+            "'caminho_do_modelo' aponta para uma pasta inexistente: %s" % source
+        )
+
+    try:
+        model = WhisperModel(
+            source,
+            device=device,
+            compute_type=compute_type,
+            # pasta persistente: a temp do ComfyUI e apagada a cada inicializacao
+            download_root=whisper_models_dir(),
+        )
+    except Exception as exc:
+        text = str(exc)
+        if any(
+            token in text
+            for token in (
+                "CERTIFICATE_VERIFY_FAILED",
+                "LocalEntryNotFound",
+                "ConnectError",
+                "ConnectionError",
+                "Max retries",
+                "self-signed certificate",
+            )
+        ):
+            raise RuntimeError(_download_hint(model_name, exc))
+        raise
     _MODEL_CACHE[key] = model
     return model
 
@@ -90,6 +164,17 @@ class DubTranscribe:
                     },
                 ),
                 "usar_cache": ("BOOLEAN", {"default": True}),
+                "caminho_do_modelo": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "placeholder": "pasta de um modelo ja baixado (opcional)",
+                        "tooltip": (
+                            "Use quando o download automatico falhar: baixe o modelo pelo "
+                            "navegador e aponte para a pasta dele."
+                        ),
+                    },
+                ),
             },
         }
 
@@ -105,6 +190,7 @@ class DubTranscribe:
         beam_size=5,
         prompt_inicial="",
         usar_cache=True,
+        caminho_do_modelo="",
     ):
         if not audio_path or not os.path.exists(audio_path):
             raise RuntimeError("Audio nao encontrado: %r" % audio_path)
@@ -134,7 +220,7 @@ class DubTranscribe:
         try:
             segs, detected = self._run_faster_whisper(
                 audio_path, modelo, device, compute_type, language, filtro_vad, beam_size,
-                prompt_inicial,
+                prompt_inicial, caminho_do_modelo,
             )
         except ImportError:
             segs, detected = self._run_openai_whisper(
@@ -161,9 +247,10 @@ class DubTranscribe:
         return (segs, detected, segutil.plain_text(segs))
 
     def _run_faster_whisper(
-        self, audio_path, modelo, device, compute_type, language, vad, beam_size, prompt
+        self, audio_path, modelo, device, compute_type, language, vad, beam_size, prompt,
+        model_path="",
     ):
-        model = _load_faster_whisper(modelo, device, compute_type)
+        model = _load_faster_whisper(modelo, device, compute_type, model_path)
         iterator, info = model.transcribe(
             audio_path,
             language=language,

@@ -315,6 +315,7 @@ Kubernetes, Grafana, Prometheus, DevOps, SRE
 | `ffmpeg nao foi encontrado` | Parte 1 deste guia; reinicie o ComfyUI depois de ajustar o PATH |
 | `yt-dlp nao encontrado` | `<seu-python> -m pip install -U yt-dlp` |
 | `yt-dlp falhou ao baixar` | Rode `pip install -U yt-dlp` (o YouTube muda com frequência). Vídeo com restrição de idade/login: nó 1, `cookies_do_navegador = chrome` com a sessão logada |
+| `CERTIFICATE_VERIFY_FAILED` / `self-signed certificate` ao baixar o modelo | Antivírus ou rede interceptando HTTPS. Desligue a "varredura HTTPS/SSL" do antivírus, baixe o modelo uma vez, religue. Alternativa: baixe pelo navegador e preencha `caminho_do_modelo` no nó 2 |
 | `Nenhum backend de transcricao instalado` | `<seu-python> -m pip install faster-whisper` |
 | Erro de cuDNN / CUDA na transcrição | Nó 2: `dispositivo = cpu` resolve na hora. Para manter a GPU: `python_embeded\python.exe -m pip install nvidia-cudnn-cu12` |
 | `Cannot run the event loop while another loop is running` | Versao antiga dos nos. Substitua a pasta pelo ZIP atualizado (que inclui `utils/aio.py`) e reinicie o ComfyUI |
@@ -326,6 +327,18 @@ Kubernetes, Grafana, Prometheus, DevOps, SRE
 | Os nós não aparecem | Veja o terminal do ComfyUI na inicialização; confira a profundidade da pasta (Parte 2) |
 
 ---
+
+## Onde ficam os arquivos
+
+| O quê | Onde |
+|---|---|
+| Modelos do Whisper | `ComfyUI\models\faster-whisper\` |
+| Cache (download, transcrição, clipes de voz) | `ComfyUI\dublagem_cache\` |
+| Vídeo dublado e legendas | `ComfyUI\output\dublagem\` |
+
+As duas primeiras são persistentes de propósito — sobrevivem a reiniciar o ComfyUI,
+então o modelo não é baixado de novo e reexecutar o workflow aproveita o que já foi
+feito. Pode apagar `dublagem_cache` à vontade quando quiser liberar espaço.
 
 ## Quanto tempo leva
 

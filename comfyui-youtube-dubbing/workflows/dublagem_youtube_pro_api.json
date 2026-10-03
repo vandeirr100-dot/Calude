@@ -31,7 +31,8 @@
       "unir_frases_curtas": true,
       "beam_size": 5,
       "prompt_inicial": "",
-      "usar_cache": true
+      "usar_cache": true,
+      "caminho_do_modelo": ""
     },
     "_meta": {
       "title": "2. Transcrever (Whisper)"

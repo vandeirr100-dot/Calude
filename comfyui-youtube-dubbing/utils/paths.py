@@ -45,27 +45,79 @@ def output_dir():
         return path
 
 
-def temp_dir():
+def models_root():
+    """Pasta de modelos do ComfyUI."""
     try:
         import folder_paths  # type: ignore
 
-        base = folder_paths.get_temp_directory()
+        base = folder_paths.models_dir
     except Exception:
-        base = os.path.join(tempfile.gettempdir(), "comfy_dubbing")
-    path = os.path.join(base, "youtube_dubbing")
+        base = os.path.join(comfy_root(), "models")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def whisper_models_dir():
+    """Onde os modelos do Whisper ficam guardados, de forma PERSISTENTE.
+
+    Nao usar a pasta temp do ComfyUI: ela e limpa a cada inicializacao, o que
+    faria o modelo (ate ~1,5 GB) ser baixado de novo toda vez que o ComfyUI abre.
+    """
+    path = os.path.join(models_root(), "faster-whisper")
     os.makedirs(path, exist_ok=True)
     return path
 
 
+def _writable(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".escrita_ok")
+        with open(probe, "w") as handle:
+            handle.write("ok")
+        os.remove(probe)
+        return True
+    except Exception:
+        return False
+
+
+def data_root():
+    """Raiz persistente dos arquivos de trabalho e do cache.
+
+    Fica fora da pasta temp do ComfyUI justamente para o cache sobreviver a um
+    reinicio - e o que torna util reexecutar o workflow sem rebaixar o video nem
+    retranscrever o audio. Pode ser apagada a mao quando quiser liberar espaco.
+    """
+    if "data_root" in _CACHED:
+        return _CACHED["data_root"]
+    candidates = [
+        os.environ.get("COMFY_DUBBING_CACHE", ""),
+        os.path.join(comfy_root(), "dublagem_cache"),
+        os.path.join(tempfile.gettempdir(), "comfy_dubbing"),
+    ]
+    chosen = None
+    for candidate in candidates:
+        if candidate and _writable(candidate):
+            chosen = candidate
+            break
+    chosen = chosen or tempfile.mkdtemp(prefix="comfy_dubbing_")
+    _CACHED["data_root"] = chosen
+    return chosen
+
+
+def temp_dir():
+    """Mantido por compatibilidade: aponta para a raiz persistente."""
+    return data_root()
+
+
 def work_dir(name):
     """Subpasta de trabalho estavel por job/midia."""
-    path = os.path.join(temp_dir(), name)
+    path = os.path.join(data_root(), name)
     os.makedirs(path, exist_ok=True)
     return path
 
 
 def cache_dir():
-    path = os.path.join(temp_dir(), "_cache")
+    path = os.path.join(data_root(), "_cache")
     os.makedirs(path, exist_ok=True)
     return path
 
