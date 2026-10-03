@@ -55,18 +55,47 @@ ComfyUI/
         └── workflows/
 ```
 
-Pelo git:
+**A forma mais simples é descompactar o ZIP ali dentro** — não precisa de git.
+
+**Confira a profundidade.** O `__init__.py` precisa estar em
+`custom_nodes/comfyui-youtube-dubbing/__init__.py`. Descompactadores costumam
+criar uma pasta a mais (`.../comfyui-youtube-dubbing/comfyui-youtube-dubbing/__init__.py`)
+— assim o ComfyUI **não carrega**.
+
+### Windows (CMD) — conferir e corrigir
+
+Entre na pasta e liste o conteúdo:
+```bat
+cd /d "%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui-youtube-dubbing"
+dir /b
+```
+- Apareceu `__init__.py`, `nodes`, `utils`, `workflows` → **está certo**, siga para a Parte 3.
+- Apareceu só `comfyui-youtube-dubbing` → sobe um nível, com o `robocopy` (já vem no Windows):
+  ```bat
+  robocopy comfyui-youtube-dubbing . /E /MOVE
+  ```
+- Pasta vazia → descompacte o ZIP aqui.
+
+> No CMD não existem `mv`, `rm` nem a quebra de linha com `\`. Os equivalentes são
+> `move`, `rmdir /s /q` e `^`. Comandos de tutorial em Linux não funcionam como estão.
+
+### Pelo git (opcional)
+
+Windows (CMD), uma linha por comando:
+```bat
+cd /d "%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI\custom_nodes"
+git clone -b claude/wonderful-lamport-emampw https://github.com/vandeirr100-dot/Calude.git temp
+robocopy temp\comfyui-youtube-dubbing comfyui-youtube-dubbing /E /MOVE
+rmdir /s /q temp
+```
+
+Linux/macOS:
 ```bash
 cd ComfyUI/custom_nodes
 git clone -b claude/wonderful-lamport-emampw https://github.com/vandeirr100-dot/Calude.git temp
 mv temp/comfyui-youtube-dubbing .
 rm -rf temp
 ```
-
-Ou descompacte o ZIP ali dentro. **Confira:** o `__init__.py` precisa estar
-em `custom_nodes/comfyui-youtube-dubbing/__init__.py`. Se ficou um nível mais
-fundo (`.../comfyui-youtube-dubbing/comfyui-youtube-dubbing/__init__.py`),
-o ComfyUI não carrega.
 
 ---
 
@@ -76,10 +105,15 @@ O detalhe que mais causa erro: as bibliotecas precisam ir **no mesmo Python que
 roda o ComfyUI**, não no Python do sistema. Use o comando da sua instalação:
 
 ### ComfyUI Portable (Windows)
-Abra o terminal na pasta `ComfyUI_windows_portable`:
-```powershell
-.\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\comfyui-youtube-dubbing\requirements.txt
+O Python do portable fica em `ComfyUI_windows_portable\python_embeded\python.exe`.
+Chame o pip por ele — de qualquer pasta, usando o caminho completo:
+```bat
+"%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\python_embeded\python.exe" -m pip install -r "%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui-youtube-dubbing\requirements.txt"
 ```
+Ajuste o começo do caminho se a sua pasta do portable estiver em outro lugar.
+
+Usar o `python` do sistema aqui **não funciona**: o ComfyUI portable não vê o que
+está instalado nele.
 
 ### Instalação manual com venv (Linux/macOS/Windows)
 ```bash
@@ -249,7 +283,7 @@ Kubernetes, Grafana, Prometheus, DevOps, SRE
 | `yt-dlp nao encontrado` | `<seu-python> -m pip install -U yt-dlp` |
 | `yt-dlp falhou ao baixar` | Rode `pip install -U yt-dlp` (o YouTube muda com frequência). Vídeo com restrição de idade/login: nó 1, `cookies_do_navegador = chrome` com a sessão logada |
 | `Nenhum backend de transcricao instalado` | `<seu-python> -m pip install faster-whisper` |
-| Erro de cuDNN / CUDA na transcrição | Nó 2: `dispositivo = cpu` (mais lento, mas funciona sempre) |
+| Erro de cuDNN / CUDA na transcrição | Nó 2: `dispositivo = cpu` resolve na hora. Para manter a GPU: `python_embeded\python.exe -m pip install nvidia-cudnn-cu12` |
 | Voz sai muda ou falha | O `edge-tts` precisa acessar `speech.platform.bing.com`. Em rede restrita, use `piper` ou `xtts_v2_clonagem` |
 | `demucs falhou` | `pip install -U demucs`, ou nó 5a: `metodo = nenhuma` |
 | `O arquivo nao tem trilha de audio` | O vídeo baixado veio sem áudio; nó 1: `resolucao_maxima = 720` e tente de novo |
