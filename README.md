@@ -29,3 +29,11 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 | S/R | `Máx. níveis acima e abaixo` | Quantidade de níveis por TF |
 | Painel | `Posição do painel` | Em cima/embaixo, esquerda/direita (ou botão **POS** no painel) |
 | Painel | `Margem horizontal / vertical` | Distância da borda escolhida |
+
+---
+
+## Outro projeto neste repositório
+
+- [`comfyui-youtube-dubbing/`](comfyui-youtube-dubbing/) — workflow de **dublagem de vídeo
+  com IA para ComfyUI**: link do YouTube (ou arquivo local) → transcrição → tradução →
+  voz neural profissional sincronizada → vídeo dublado para download.

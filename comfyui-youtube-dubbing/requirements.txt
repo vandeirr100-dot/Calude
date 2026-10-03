@@ -1,0 +1,17 @@
+# --- obrigatorios -----------------------------------------------------------
+yt-dlp>=2024.8.6          # download do YouTube
+faster-whisper>=1.0.3     # transcricao com timestamps (rapida, suporta GPU)
+edge-tts>=6.1.10          # vozes neurais profissionais, gratuitas, sem chave
+numpy>=1.24
+
+# --- opcionais --------------------------------------------------------------
+# demucs>=4.0.1           # separar voz de musica/efeitos (preserva trilha sonora)
+# coqui-tts>=0.24.1       # clonagem de voz XTTS-v2 (mantem o timbre original)
+# piper-tts>=1.2.0        # TTS 100% offline
+# openai-whisper>=20231117  # backend alternativo de transcricao
+
+# Fora do pip: ffmpeg e ffprobe precisam estar no PATH.
+#   Linux:   sudo apt install ffmpeg
+#   macOS:   brew install ffmpeg
+#   Windows: winget install Gyan.FFmpeg
+# Para o melhor ajuste de tempo sem alterar o tom, use um ffmpeg com librubberband.
