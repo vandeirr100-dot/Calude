@@ -13,7 +13,7 @@ from ..utils.aio import run_coroutine
 from ..utils.paths import cache_dir, find_binary, work_dir
 from ..utils.voices import pick_voice, voice_combo
 
-ENGINES = ["edge_tts", "xtts_v2_clonagem", "piper", "openai_tts", "elevenlabs"]
+ENGINES = ["edge_tts", "google_tts", "xtts_v2_clonagem", "piper", "openai_tts", "elevenlabs"]
 SYNC_MODES = ["encaixar_no_tempo", "natural_com_deslocamento", "sem_ajuste"]
 
 _XTTS_CACHE = {}
@@ -65,6 +65,128 @@ def _synth_edge(text, voice, out_mp3, rate_pct, volume_pct, pitch_hz):
         if proc.returncode != 0:
             raise RuntimeError("edge-tts falhou: %s" % (proc.stderr or "")[-400:])
         return out_mp3
+
+
+_GOOGLE_VOICES = {}
+
+# ordem de preferencia por familia de voz do Google (melhor primeiro)
+_GOOGLE_TIERS = ("Chirp3-HD", "Chirp-HD", "Studio", "Neural2", "Wavenet", "News", "Standard")
+
+
+def _google_list_voices(api_key, language_code=None):
+    """Consulta as vozes disponiveis na API do Google (resultado cacheado)."""
+    import urllib.parse
+    import urllib.request
+
+    key = api_key or os.environ.get("GOOGLE_TTS_API_KEY", "") or os.environ.get(
+        "GOOGLE_API_KEY", ""
+    )
+    if not key:
+        raise RuntimeError(
+            "Defina a variavel de ambiente GOOGLE_TTS_API_KEY (ou preencha 'api_key') "
+            "com uma chave da API Cloud Text-to-Speech."
+        )
+    cache_key = language_code or "*"
+    if cache_key in _GOOGLE_VOICES:
+        return _GOOGLE_VOICES[cache_key]
+
+    params = {"key": key}
+    if language_code:
+        params["languageCode"] = language_code
+    url = "https://texttospeech.googleapis.com/v1/voices?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            "Nao foi possivel listar as vozes do Google (%s).\n"
+            "Confira se a chave e valida e se a API 'Cloud Text-to-Speech' esta ativada "
+            "no seu projeto do Google Cloud." % exc
+        )
+    voices = data.get("voices", [])
+    _GOOGLE_VOICES[cache_key] = voices
+    return voices
+
+
+def _google_pick_voice(api_key, locale, gender="FEMALE"):
+    """Escolhe a melhor voz disponivel para o locale, preferindo as mais novas."""
+    voices = _google_list_voices(api_key, locale)
+    if not voices:
+        voices = [
+            v
+            for v in _google_list_voices(api_key)
+            if any(code.lower().startswith(locale.split("-")[0].lower()) for code in v.get("languageCodes", []))
+        ]
+    if not voices:
+        raise RuntimeError("O Google nao oferece vozes para o idioma '%s'." % locale)
+
+    def rank(voice):
+        name = voice.get("name", "")
+        tier = len(_GOOGLE_TIERS)
+        for index, token in enumerate(_GOOGLE_TIERS):
+            if token in name:
+                tier = index
+                break
+        same_gender = 0 if voice.get("ssmlGender") == gender else 1
+        # o genero pedido vem antes da familia: senao o parametro seria ignorado
+        # sempre que existisse uma voz mais nova do outro genero
+        return (same_gender, tier, name)
+
+    return sorted(voices, key=rank)[0]["name"]
+
+
+def _synth_google(text, out_mp3, voice, api_key, locale, rate_pct=0, pitch_semitones=0):
+    """Google Cloud Text-to-Speech (vozes Neural2 / Chirp 3 HD / Studio)."""
+    import base64
+    import urllib.request
+
+    key = api_key or os.environ.get("GOOGLE_TTS_API_KEY", "") or os.environ.get(
+        "GOOGLE_API_KEY", ""
+    )
+    if not key:
+        raise RuntimeError(
+            "Defina a variavel de ambiente GOOGLE_TTS_API_KEY (ou preencha 'api_key') "
+            "com uma chave da API Cloud Text-to-Speech."
+        )
+
+    # o 'name' da voz manda; o languageCode precisa combinar com ele
+    language_code = "-".join(voice.split("-")[:2]) if voice else locale
+
+    payload = {
+        "input": {"text": text},
+        "voice": {"languageCode": language_code, "name": voice},
+        "audioConfig": {
+            "audioEncoding": "MP3",
+            "speakingRate": max(0.25, min(4.0, 1.0 + rate_pct / 100.0)),
+            "sampleRateHertz": 24000,
+        },
+    }
+    # as vozes Chirp/Studio recusam ajuste de pitch
+    if pitch_semitones and not any(t in voice for t in ("Chirp", "Studio")):
+        payload["audioConfig"]["pitch"] = max(-20.0, min(20.0, float(pitch_semitones)))
+
+    url = "https://texttospeech.googleapis.com/v1/text:synthesize?key=" + key
+    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"))
+    request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        detail = ""
+        body = getattr(exc, "read", None)
+        if body:
+            try:
+                detail = "\n" + body().decode("utf-8", "ignore")[:400]
+            except Exception:
+                detail = ""
+        raise RuntimeError("Google TTS falhou para a voz '%s': %s%s" % (voice, exc, detail))
+
+    audio = data.get("audioContent")
+    if not audio:
+        raise RuntimeError("Google TTS nao devolveu audio: %s" % json.dumps(data)[:300])
+    with open(out_mp3, "wb") as handle:
+        handle.write(base64.b64decode(audio))
+    return out_mp3
 
 
 def _load_xtts():
@@ -241,6 +363,8 @@ class DubNeuralTTS:
         voice = (voz_personalizada or "").strip() or voz
         if motor == "edge_tts":
             voice = pick_voice(locale, voice)
+        elif motor == "google_tts" and (not voice or voice == "auto"):
+            voice = _google_pick_voice(api_key, locale)
 
         job = work_dir(
             "tts_"
@@ -275,7 +399,7 @@ class DubNeuralTTS:
                     clip_wav,
                     motor,
                     voice,
-                    lang_code,
+                    lang_code if motor != "google_tts" else locale,
                     audio_referencia,
                     api_key,
                     velocidade_pct,
@@ -378,6 +502,11 @@ class DubNeuralTTS:
         if motor == "edge_tts":
             _synth_edge(text, voice, tmp + ".mp3", rate_pct, volume_pct, pitch_hz)
             media.to_wav(tmp + ".mp3", out_wav)
+        elif motor == "google_tts":
+            _synth_google(
+                text, tmp + ".mp3", voice, api_key, lang_code, rate_pct, pitch_hz
+            )
+            media.to_wav(tmp + ".mp3", out_wav)
         elif motor == "xtts_v2_clonagem":
             speed = 1.0 + (rate_pct / 100.0)
             _synth_xtts(text, tmp + ".wav", lang_code, reference, speed=speed)
@@ -408,17 +537,35 @@ class DubListVoices:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("vozes",)
     OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Mostra as vozes disponiveis para um locale (ex.: pt-BR). Copie o nome desejado "
+        "para o campo 'voz_personalizada' do no 4."
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "motor": (["edge_tts", "google_tts"], {"default": "edge_tts"}),
                 "locale": ("STRING", {"default": "pt-BR"}),
+            },
+            "optional": {
+                "api_key": (
+                    "STRING",
+                    {"default": "", "placeholder": "so para google_tts; vazio = variavel de ambiente"},
+                ),
                 "consultar_servico": ("BOOLEAN", {"default": True}),
-            }
+            },
         }
 
-    def run(self, locale, consultar_servico):
+    def run(self, motor, locale, api_key="", consultar_servico=True):
+        if motor == "google_tts":
+            text = self._google(locale, api_key)
+        else:
+            text = self._edge(locale, consultar_servico)
+        return {"ui": {"text": [text]}, "result": (text,)}
+
+    def _edge(self, locale, consultar_servico):
         from ..utils.voices import refresh_dynamic_voices, voices_for_locale
 
         found = list(voices_for_locale(locale))
@@ -426,8 +573,38 @@ class DubListVoices:
             for voice in refresh_dynamic_voices():
                 if voice.lower().startswith(locale.lower() + "-") and voice not in found:
                     found.append(voice)
-        text = "\n".join(found) or "Nenhuma voz encontrada para '%s'." % locale
-        return {"ui": {"text": [text]}, "result": (text,)}
+        if not found:
+            return "Nenhuma voz Edge encontrada para '%s'." % locale
+        return "Vozes Edge TTS para %s:\n%s" % (locale, "\n".join("  " + v for v in found))
+
+    def _google(self, locale, api_key):
+        voices = _google_list_voices(api_key, locale)
+        if not voices:
+            return "Nenhuma voz do Google encontrada para '%s'." % locale
+
+        def tier_of(name):
+            for token in _GOOGLE_TIERS:
+                if token in name:
+                    return token
+            return "Outras"
+
+        grupos = {}
+        for voice in voices:
+            grupos.setdefault(tier_of(voice.get("name", "")), []).append(voice)
+
+        linhas = ["Vozes do Google para %s (melhores primeiro):" % locale]
+        for token in list(_GOOGLE_TIERS) + ["Outras"]:
+            if token not in grupos:
+                continue
+            linhas.append("")
+            linhas.append("[%s]" % token)
+            for voice in sorted(grupos[token], key=lambda v: v.get("name", "")):
+                linhas.append(
+                    "  %-34s %s" % (voice.get("name", ""), voice.get("ssmlGender", ""))
+                )
+        linhas.append("")
+        linhas.append("Copie o nome para 'voz_personalizada' no no 4.")
+        return "\n".join(linhas)
 
 
 NODE_CLASS_MAPPINGS = {

@@ -18,8 +18,9 @@ Arquivo local ────┘    (Whisper)     (idioma      (sincronizada)  (pre
 - **Tradução consciente de duração**: o tradutor recebe a janela de tempo de cada fala e é
   instruído a manter o texto curto o bastante para caber nela — o que evita a dublagem
   "atropelada" típica de pipelines ingênuos. Suporta glossário e escolha de tom.
-- **Voz neural profissional**: `edge-tts` (vozes Azure Neural, gratuitas e sem chave de API),
-  com opção de **clonagem da voz original** (XTTS-v2), OpenAI TTS, ElevenLabs ou Piper (offline).
+- **Voz neural profissional**: `edge-tts` (vozes Azure Neural, gratuitas e sem chave de API)
+  ou **Google Cloud TTS** (Chirp 3 HD / Studio / Neural2), com opção de **clonagem da voz
+  original** (XTTS-v2), OpenAI TTS, ElevenLabs ou Piper (offline).
 - **Sincronia**: cada fala é esticada/comprimida para a janela original **preservando o tom**
   (filtro `rubberband` quando disponível, `atempo` como alternativa).
 - **Preserva a trilha sonora**: separação de voz/música com Demucs e *ducking* automático —

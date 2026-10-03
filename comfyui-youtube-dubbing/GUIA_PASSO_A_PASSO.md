@@ -266,6 +266,29 @@ export ANTHROPIC_API_KEY="sua-chave"     # Windows: setx ANTHROPIC_API_KEY "sua-
 Prefira a variável de ambiente ao campo `api_key` do nó — assim a chave não fica
 salva dentro do arquivo `.json` do workflow, que você pode acabar compartilhando.
 
+### Usar as vozes neurais do Google
+
+As vozes do Google Cloud (famílias **Chirp 3 HD**, **Studio** e **Neural2**) estão entre
+as melhores disponíveis. Precisam de uma chave de API:
+
+1. Acesse o [Google Cloud Console](https://console.cloud.google.com/) e crie (ou escolha) um projeto.
+2. Ative a API **Cloud Text-to-Speech** em *APIs e serviços → Biblioteca*.
+3. Em *APIs e serviços → Credenciais*, crie uma **Chave de API** e copie.
+4. Antes de abrir o ComfyUI, defina a variável de ambiente:
+   ```bat
+   setx GOOGLE_TTS_API_KEY "sua-chave-aqui"
+   ```
+   (feche e reabra o terminal depois do `setx`)
+5. No nó **4**, mude `motor` para `google_tts`. Deixe `voz = auto` que ele escolhe a
+   melhor voz disponível para o idioma.
+
+Para escolher outra voz, adicione o nó **Listar Vozes Neurais**, ponha `motor = google_tts`
+e o `locale` (ex.: `pt-BR`), execute, e copie o nome para `voz_personalizada` no nó 4.
+
+> O Google cobra por caractere, com uma cota gratuita mensal (mais generosa nas vozes
+> Standard que nas Neural2/Chirp). Verifique os preços atuais antes de dublar vídeos
+> longos — o `edge_tts` continua sendo gratuito e sem chave.
+
 ### Voz
 - `voz = auto` já escolhe uma boa voz neural do idioma.
 - Para escolher outra: adicione o nó **Listar Vozes Neurais**, ponha o locale
