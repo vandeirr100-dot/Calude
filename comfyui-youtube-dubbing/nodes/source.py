@@ -103,12 +103,14 @@ class YouTubeDubSource:
                 "arquivo_local": (
                     list_input_videos(),
                     {
-                        "video_upload": True,
+                        # sem 'video_upload': o botao de envio exige um arquivo
+                        # selecionado ("entrada de midia obrigatoria") e bloqueia a
+                        # execucao mesmo no modo youtube_url - alem de estourar o
+                        # limite de upload em qualquer video de duracao real
                         "tooltip": (
-                            "Lista os videos de ComfyUI/input. O botao de upload serve apenas "
-                            "para arquivos pequenos: o ComfyUI limita o tamanho do envio "
-                            "(erro 413). Para videos grandes, copie o arquivo para a pasta "
-                            "ComfyUI/input e recarregue a pagina, ou use 'caminho_absoluto'."
+                            "Lista os videos da pasta ComfyUI/input. Para um video em outro "
+                            "lugar do disco, use 'caminho_absoluto'. So vale quando "
+                            "modo = arquivo_local."
                         ),
                     },
                 ),

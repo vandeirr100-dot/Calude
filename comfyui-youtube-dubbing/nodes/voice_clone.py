@@ -110,7 +110,9 @@ class DubVoiceSample:
                 "voz": (
                     voice_combo(),
                     {
-                        "audio_upload": True,
+                        # idem ao no 1: o flag de upload tornaria este campo uma
+                        # entrada de midia obrigatoria, bloqueando quem usa o
+                        # 'caminho_do_audio'
                         "tooltip": (
                             "Escolha uma voz ja salva ou um arquivo da pasta ComfyUI/input. "
                             "Para um arquivo em outro lugar do disco, deixe nesta opcao e "
