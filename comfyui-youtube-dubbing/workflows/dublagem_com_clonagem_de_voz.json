@@ -68,7 +68,7 @@
       "widgets_values": [
         "youtube_url",
         "https://www.youtube.com/watch?v=COLE_SEU_LINK_AQUI",
-        "<nenhum video em ComfyUI/input>",
+        "<nenhum - usar link ou caminho absoluto>",
         "1080",
         true,
         "",
@@ -584,7 +584,7 @@
       ],
       "size": [
         400,
-        268
+        242
       ],
       "flags": {},
       "order": 1,
@@ -611,9 +611,8 @@
         "Node name for S&R": "DubVoiceSample"
       },
       "widgets_values": [
-        "arquivo_novo",
+        "<nenhuma - usar o caminho abaixo>",
         "",
-        "<nenhuma voz salva>",
         18.0,
         true,
         true,

@@ -17,19 +17,48 @@ REF_SR = 24000
 MIN_SECONDS = 4.0
 
 
+# O placeholder precisa existir SEMPRE na lista. Se ele sumisse quando a primeira
+# voz fosse salva, todo workflow gravado com ele viraria invalido
+# ("Value not in list") e o ComfyUI recusaria o prompt inteiro.
+NENHUMA = "<nenhuma - usar o caminho abaixo>"
+PREFIXO_SALVA = "[salva] "
+PREFIXO_INPUT = "[input] "
+
+
 def profiles_dir():
     path = os.path.join(models_root(), "vozes_clonadas")
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def list_profiles():
-    found = [
-        os.path.splitext(name)[0]
-        for name in sorted(os.listdir(profiles_dir()))
-        if name.lower().endswith(".wav")
-    ]
-    return found or ["<nenhuma voz salva>"]
+def saved_profiles():
+    try:
+        return [
+            os.path.splitext(name)[0]
+            for name in sorted(os.listdir(profiles_dir()))
+            if name.lower().endswith(".wav")
+        ]
+    except Exception:
+        return []
+
+
+def _input_media():
+    """Audios e videos disponiveis na pasta ComfyUI/input."""
+    base = input_dir()
+    found = []
+    for root, _dirs, files in os.walk(base):
+        for name in files:
+            if name.lower().endswith(AUDIO_EXTS + VIDEO_EXTS):
+                found.append(os.path.relpath(os.path.join(root, name), base))
+    return sorted(found)
+
+
+def voice_combo():
+    """Uma lista so: vozes ja salvas + arquivos da pasta input."""
+    options = [NENHUMA]
+    options += [PREFIXO_SALVA + name for name in saved_profiles()]
+    options += [PREFIXO_INPUT + name for name in _input_media()]
+    return options
 
 
 def _resolve_source(path):
@@ -78,19 +107,28 @@ class DubVoiceSample:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "origem": (["arquivo_novo", "voz_salva"], {"default": "arquivo_novo"}),
+                "voz": (
+                    voice_combo(),
+                    {
+                        "audio_upload": True,
+                        "tooltip": (
+                            "Escolha uma voz ja salva ou um arquivo da pasta ComfyUI/input. "
+                            "Para um arquivo em outro lugar do disco, deixe nesta opcao e "
+                            "preencha 'caminho_do_audio'."
+                        ),
+                    },
+                ),
                 "caminho_do_audio": (
                     "STRING",
                     {
                         "default": "",
-                        "placeholder": r"C:\Users\voce\Musica\minha_voz.mp3",
+                        "placeholder": r"C:\Users\voce\Musica\minha_voz.mp3 (tem prioridade)",
                         "tooltip": (
-                            "Caminho completo de um audio ou video com a voz a clonar. "
-                            "Tambem aceita o nome de um arquivo da pasta ComfyUI/input."
+                            "Caminho completo de um audio ou video. Preenchido, tem prioridade "
+                            "sobre a caixa de escolha acima."
                         ),
                     },
                 ),
-                "voz_salva": (list_profiles(), {"tooltip": "Usado quando origem = voz_salva."}),
                 "duracao_alvo_s": (
                     "FLOAT",
                     {
@@ -128,32 +166,39 @@ class DubVoiceSample:
 
     def prepare(
         self,
-        origem,
+        voz,
         caminho_do_audio,
-        voz_salva,
         duracao_alvo_s,
         remover_silencio,
         normalizar,
         salvar_como="",
         inicio_manual_s=-1.0,
     ):
-        if origem == "voz_salva":
-            if not voz_salva or voz_salva.startswith("<"):
-                raise RuntimeError(
-                    "Nenhuma voz salva ainda. Use origem = 'arquivo_novo', escolha um audio "
-                    "e preencha 'salvar_como' para criar a primeira."
-                )
-            path = os.path.join(profiles_dir(), voz_salva + ".wav")
+        escolha = (voz or NENHUMA).strip()
+        digitado = (caminho_do_audio or "").strip()
+
+        # uma voz ja salva vai direto: ela foi preparada quando foi criada
+        if not digitado and escolha.startswith(PREFIXO_SALVA):
+            nome = escolha[len(PREFIXO_SALVA) :]
+            path = os.path.join(profiles_dir(), nome + ".wav")
             if not os.path.exists(path):
-                raise RuntimeError("Perfil de voz nao encontrado: %s" % path)
-            info = "Voz salva: %s (%.1fs)" % (voz_salva, media.duration_of(path))
+                raise RuntimeError(
+                    "A voz '%s' nao esta mais em %s." % (nome, profiles_dir())
+                )
+            info = "Voz salva: %s (%.1fs)" % (nome, media.duration_of(path))
             return {"ui": {"text": [info]}, "result": (path, info)}
 
-        source = _resolve_source(caminho_do_audio)
-        if not source:
+        if digitado:
+            source = _resolve_source(digitado)
+        elif escolha.startswith(PREFIXO_INPUT):
+            source = os.path.join(input_dir(), escolha[len(PREFIXO_INPUT) :])
+        else:
             raise RuntimeError(
-                "Informe em 'caminho_do_audio' o arquivo com a voz a ser clonada.\n"
-                "Pode ser um audio (.wav/.mp3/.m4a) ou um video - o audio e extraido."
+                "Nenhuma voz escolhida. Faca uma destas coisas:\n"
+                "  1. Escolha uma voz na caixa 'voz' (as '[salva]' ja estao prontas, as "
+                "'[input]' sao arquivos da pasta ComfyUI/input);\n"
+                "  2. Ou cole o caminho completo do audio em 'caminho_do_audio'.\n"
+                "Serve audio (.wav/.mp3/.m4a) ou video - o audio e extraido."
             )
         if not os.path.exists(source):
             raise RuntimeError("Arquivo nao encontrado: %s" % source)
@@ -259,8 +304,10 @@ class DubVoiceSample:
             "Arquivo: %s" % referencia,
         ]
         if salvo:
-            linhas.append("Salva na biblioteca como '%s' - recarregue a pagina para ve-la na lista."
-                          % os.path.splitext(os.path.basename(salvo))[0])
+            linhas.append(
+                "Salva na biblioteca como '[salva] %s' - recarregue a pagina (F5) para "
+                "ve-la na caixa de escolha." % os.path.splitext(os.path.basename(salvo))[0]
+            )
         if avisos:
             linhas.append("")
             linhas.extend("Aviso: " + a for a in avisos)
@@ -269,13 +316,8 @@ class DubVoiceSample:
         return {"ui": {"text": [info]}, "result": (referencia, info)}
 
     @classmethod
-    def IS_CHANGED(cls, origem, caminho_do_audio, voz_salva, **kwargs):
-        return "%s|%s|%s|%s" % (
-            origem,
-            caminho_do_audio,
-            voz_salva,
-            kwargs.get("salvar_como", ""),
-        )
+    def IS_CHANGED(cls, voz, caminho_do_audio, **kwargs):
+        return "%s|%s|%s" % (voz, caminho_do_audio, kwargs.get("salvar_como", ""))
 
 
 NODE_CLASS_MAPPINGS = {"DubVoiceSample": DubVoiceSample}

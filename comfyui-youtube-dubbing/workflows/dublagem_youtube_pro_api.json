@@ -4,7 +4,7 @@
     "inputs": {
       "modo": "youtube_url",
       "youtube_url": "https://www.youtube.com/watch?v=COLE_SEU_LINK_AQUI",
-      "arquivo_local": "<nenhum video em ComfyUI/input>",
+      "arquivo_local": "<nenhum - usar link ou caminho absoluto>",
       "resolucao_maxima": "1080",
       "usar_cache": true,
       "caminho_absoluto": "",

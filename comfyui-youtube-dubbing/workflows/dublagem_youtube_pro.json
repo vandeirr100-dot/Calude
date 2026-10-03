@@ -68,7 +68,7 @@
       "widgets_values": [
         "youtube_url",
         "https://www.youtube.com/watch?v=COLE_SEU_LINK_AQUI",
-        "<nenhum video em ComfyUI/input>",
+        "<nenhum - usar link ou caminho absoluto>",
         "1080",
         true,
         "",

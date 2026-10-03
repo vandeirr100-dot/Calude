@@ -23,13 +23,19 @@ def is_youtube_url(url):
     return bool(_URL_RE.match((url or "").strip()))
 
 
+# Mesmo motivo do no de voz: o placeholder tem de estar SEMPRE na lista. Se ele
+# sumisse ao aparecer o primeiro video em input/, qualquer workflow gravado com
+# ele passaria a ser recusado com "Value not in list".
+SEM_VIDEO = "<nenhum - usar link ou caminho absoluto>"
+
+
 def list_input_videos():
     found = []
     base = input_dir()
     for ext in VIDEO_EXTS:
         for path in glob.glob(os.path.join(base, "**", "*" + ext), recursive=True):
             found.append(os.path.relpath(path, base))
-    return sorted(found) or ["<nenhum video em ComfyUI/input>"]
+    return [SEM_VIDEO] + sorted(found)
 
 
 def _ytdlp_cmd():
