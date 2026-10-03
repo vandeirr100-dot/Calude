@@ -37,3 +37,4 @@ Indicador para MetaTrader 5 (`TrendLine_CheatCode_Indicator.mq5`).
 - [`comfyui-youtube-dubbing/`](comfyui-youtube-dubbing/) — workflow de **dublagem de vídeo
   com IA para ComfyUI**: link do YouTube (ou arquivo local) → transcrição → tradução →
   voz neural profissional sincronizada → vídeo dublado para download.
+  Veja o [guia passo a passo](comfyui-youtube-dubbing/GUIA_PASSO_A_PASSO.md).

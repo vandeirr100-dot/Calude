@@ -27,6 +27,8 @@ Arquivo local ────┘    (Whisper)     (idioma      (sincronizada)  (pre
 - **Saída pronta**: MP4/MKV/MOV/WebM com loudness normalizado (padrão de streaming),
   legendas SRT/VTT, áudio original opcional como segunda faixa e link de download no próprio nó.
 
+> **Primeira vez?** Siga o [GUIA_PASSO_A_PASSO.md](GUIA_PASSO_A_PASSO.md) — do ffmpeg até o primeiro vídeo dublado, com os erros mais comuns e como resolver.
+
 ## Instalação
 
 1. Copie a pasta para os custom nodes do ComfyUI:
