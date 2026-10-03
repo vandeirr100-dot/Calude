@@ -15,7 +15,7 @@ import traceback
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
-_MODULES = ("source", "asr", "translate", "tts", "audio_mix", "mux")
+_MODULES = ("source", "asr", "translate", "tts", "voice_clone", "audio_mix", "mux")
 
 _errors = []
 for name in _MODULES:

@@ -346,6 +346,38 @@ def build_api_workflow(pkg):
     return prompt
 
 
+CLONE_NODE = {
+    "id": 10,
+    "class": "DubVoiceSample",
+    "pos": [860, 620],
+    "title": "4a. SUA VOZ -> escolha o audio de exemplo",
+    "values": {
+        "origem": "arquivo_novo",
+        "caminho_do_audio": "",
+        "duracao_alvo_s": 18.0,
+        "remover_silencio": True,
+        "normalizar": True,
+        "salvar_como": "minha_voz",
+    },
+    "links": {},
+}
+
+
+def build_clone_variant():
+    """Variante do grafo usando clonagem de voz a partir de uma amostra do usuario."""
+    graph = []
+    for entry in GRAPH:
+        entry = {k: (dict(v) if isinstance(v, dict) else v) for k, v in entry.items()}
+        if entry["class"] == "DubNeuralTTS":
+            entry["values"] = dict(entry["values"])
+            entry["values"]["motor"] = "xtts_v2_clonagem"
+            entry["links"] = dict(entry["links"])
+            entry["links"]["audio_referencia"] = (10, 0)  # vem da amostra do usuario
+        graph.append(entry)
+    graph.append(CLONE_NODE)
+    return graph
+
+
 def main():
     pkg = load_package()
     ui = build_ui_workflow(pkg)
@@ -360,6 +392,27 @@ def main():
 
     print("Gerado: %s (%d nos, %d links)" % (ui_path, len(ui["nodes"]), len(ui["links"])))
     print("Gerado: %s" % api_path)
+
+    # variante com clonagem de voz
+    global GRAPH
+    principal = GRAPH
+    try:
+        GRAPH = build_clone_variant()
+        clone_ui = build_ui_workflow(pkg)
+        clone_api = build_api_workflow(pkg)
+    finally:
+        GRAPH = principal
+
+    clone_ui_path = os.path.join(HERE, "dublagem_com_clonagem_de_voz.json")
+    clone_api_path = os.path.join(HERE, "dublagem_com_clonagem_de_voz_api.json")
+    with open(clone_ui_path, "w", encoding="utf-8") as handle:
+        json.dump(clone_ui, handle, ensure_ascii=False, indent=2)
+    with open(clone_api_path, "w", encoding="utf-8") as handle:
+        json.dump(clone_api, handle, ensure_ascii=False, indent=2)
+    print(
+        "Gerado: %s (%d nos, %d links)"
+        % (clone_ui_path, len(clone_ui["nodes"]), len(clone_ui["links"]))
+    )
     return ui, api
 
 

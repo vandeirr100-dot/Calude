@@ -212,13 +212,36 @@ def _load_xtts():
     return model
 
 
+# idiomas que o XTTS-v2 sustenta
+XTTS_LANGUAGES = {
+    "en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru",
+    "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi",
+}
+
+
+def _xtts_language(lang_code):
+    code = (lang_code or "en").split("-")[0].lower()
+    if code == "zh":
+        return "zh-cn"
+    if code not in XTTS_LANGUAGES:
+        raise RuntimeError(
+            "O XTTS-v2 nao sustenta o idioma '%s'.\nIdiomas disponiveis: %s.\n"
+            "Para esse idioma, use o motor 'edge_tts' ou 'google_tts'."
+            % (code, ", ".join(sorted(XTTS_LANGUAGES)))
+        )
+    return code
+
+
 def _synth_xtts(text, out_wav, language, speaker_wav, speed=1.0):
-    model = _load_xtts()
     if not speaker_wav or not os.path.exists(speaker_wav):
         raise RuntimeError(
-            "A clonagem de voz precisa de 'audio_referencia' (6-20s da voz original). "
-            "Conecte a saida 'voz_referencia' do no de Separacao de Audio."
+            "A clonagem de voz precisa de um audio de referencia.\n"
+            "Use o no '4a. Amostra de Voz (clonagem)' e ligue a saida 'audio_referencia' "
+            "na entrada de mesmo nome deste no.\n"
+            "Alternativa: ligar 'voz_referencia' do no 5a para clonar a voz do proprio video."
         )
+    language = _xtts_language(language)
+    model = _load_xtts()
     model.tts_to_file(
         text=text,
         file_path=out_wav,

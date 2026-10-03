@@ -1,0 +1,227 @@
+{
+  "1": {
+    "class_type": "YouTubeDubSource",
+    "inputs": {
+      "modo": "youtube_url",
+      "youtube_url": "https://www.youtube.com/watch?v=COLE_SEU_LINK_AQUI",
+      "arquivo_local": "<nenhum video em ComfyUI/input>",
+      "resolucao_maxima": "1080",
+      "usar_cache": true,
+      "caminho_absoluto": "",
+      "cookies_do_navegador": "nenhum",
+      "recorte_inicio_s": 0.0,
+      "recorte_duracao_s": 0.0
+    },
+    "_meta": {
+      "title": "1. Cole o link do YouTube aqui"
+    }
+  },
+  "2": {
+    "class_type": "DubTranscribe",
+    "inputs": {
+      "audio_path": [
+        "1",
+        1
+      ],
+      "modelo": "large-v3-turbo",
+      "dispositivo": "auto",
+      "precisao": "auto",
+      "idioma_origem": "auto",
+      "filtro_vad": true,
+      "unir_frases_curtas": true,
+      "beam_size": 5,
+      "prompt_inicial": "",
+      "usar_cache": true,
+      "caminho_do_modelo": ""
+    },
+    "_meta": {
+      "title": "2. Transcrever (Whisper)"
+    }
+  },
+  "3": {
+    "class_type": "DubTranslate",
+    "inputs": {
+      "segmentos": [
+        "2",
+        0
+      ],
+      "idioma_destino": "Ingles (EUA)",
+      "motor": "google_gratis",
+      "tom": "neutro",
+      "tolerancia_comprimento_pct": 15,
+      "api_key": "",
+      "modelo_llm": "claude-sonnet-5-5",
+      "falas_por_requisicao": 25,
+      "glossario": "",
+      "idioma_origem": "auto",
+      "url_libretranslate": "https://libretranslate.com/translate"
+    },
+    "_meta": {
+      "title": "3. ESCOLHA O IDIOMA DA DUBLAGEM"
+    }
+  },
+  "4": {
+    "class_type": "DubSeparateAudio",
+    "inputs": {
+      "audio_path": [
+        "1",
+        1
+      ],
+      "metodo": "nenhuma",
+      "modelo_demucs": "htdemucs",
+      "usar_cache": true,
+      "duracao_referencia_s": 15.0
+    },
+    "_meta": {
+      "title": "5a. Preservar musica/efeitos (opcional)"
+    }
+  },
+  "5": {
+    "class_type": "DubNeuralTTS",
+    "inputs": {
+      "segmentos": [
+        "3",
+        0
+      ],
+      "idioma_destino": [
+        "3",
+        1
+      ],
+      "motor": "xtts_v2_clonagem",
+      "voz": "auto",
+      "modo_sincronia": "encaixar_no_tempo",
+      "aceleracao_maxima": 1.35,
+      "desaceleracao_maxima": 0.85,
+      "velocidade_pct": 0,
+      "volume_pct": 0,
+      "tom_hz": 0,
+      "audio_referencia": [
+        "10",
+        0
+      ],
+      "api_key": "",
+      "voz_personalizada": "",
+      "normalizar_loudness": true,
+      "lufs_alvo": -16.0,
+      "usar_cache": true
+    },
+    "_meta": {
+      "title": "4. Voz neural + encaixe no tempo"
+    }
+  },
+  "6": {
+    "class_type": "DubMixAudio",
+    "inputs": {
+      "dub_audio_path": [
+        "5",
+        0
+      ],
+      "ganho_dub_db": 0.0,
+      "ganho_fundo_db": -6.0,
+      "ducking_db": -8.0,
+      "saida_estereo": true,
+      "fundo_audio_path": [
+        "4",
+        0
+      ],
+      "audio_original_path": [
+        "1",
+        1
+      ],
+      "ganho_original_db": -60.0,
+      "lufs_alvo": -14.0,
+      "normalizar": true
+    },
+    "_meta": {
+      "title": "5b. Mixagem final"
+    }
+  },
+  "7": {
+    "class_type": "DubSaveSubtitles",
+    "inputs": {
+      "segmentos": [
+        "5",
+        1
+      ],
+      "nome_base": [
+        "1",
+        2
+      ],
+      "usar_traducao": true,
+      "subpasta": "dublagem"
+    },
+    "_meta": {
+      "title": "6a. Legendas traduzidas"
+    }
+  },
+  "8": {
+    "class_type": "DubMuxVideo",
+    "inputs": {
+      "video_path": [
+        "1",
+        0
+      ],
+      "audio_final_path": [
+        "6",
+        0
+      ],
+      "nome_base": [
+        "1",
+        2
+      ],
+      "container": "mp4",
+      "modo_video": "copiar_original",
+      "bitrate_audio": "256k",
+      "subpasta": "dublagem",
+      "legenda_srt": [
+        "7",
+        0
+      ],
+      "legendas": "embutida_soft",
+      "manter_audio_original_como_faixa2": false,
+      "audio_original_path": [
+        "1",
+        1
+      ],
+      "idioma_faixa": [
+        "3",
+        1
+      ],
+      "duracao_final": "seguir_video",
+      "crf": 20
+    },
+    "_meta": {
+      "title": "6b. VIDEO DUBLADO -> baixe aqui"
+    }
+  },
+  "9": {
+    "class_type": "DubSegmentsPreview",
+    "inputs": {
+      "segmentos": [
+        "5",
+        1
+      ],
+      "mostrar_traducao": true,
+      "limite_de_linhas": 40
+    },
+    "_meta": {
+      "title": "Conferir falas e traducao"
+    }
+  },
+  "10": {
+    "class_type": "DubVoiceSample",
+    "inputs": {
+      "origem": "arquivo_novo",
+      "caminho_do_audio": "",
+      "voz_salva": "<nenhuma voz salva>",
+      "duracao_alvo_s": 18.0,
+      "remover_silencio": true,
+      "normalizar": true,
+      "salvar_como": "minha_voz",
+      "inicio_manual_s": -1.0
+    },
+    "_meta": {
+      "title": "4a. SUA VOZ -> escolha o audio de exemplo"
+    }
+  }
+}

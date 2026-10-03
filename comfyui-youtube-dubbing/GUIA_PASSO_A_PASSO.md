@@ -298,6 +298,44 @@ e o `locale` (ex.: `pt-BR`), execute, e copie o nome para `voz_personalizada` no
   `motor` para `xtts_v2_clonagem`. Precisa de `pip install coqui-tts` (baixa ~1,8 GB
   na primeira vez). A conexão da voz de referência já está pronta no workflow.
 
+### Clonar uma voz a partir de um áudio de exemplo
+
+Permite dublar o vídeo com a **sua** voz (ou outra que você tenha o direito de usar).
+
+**Instalação (uma vez):**
+```bat
+"%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\python_embeded\python.exe" -m pip install coqui-tts
+```
+No primeiro uso o modelo XTTS-v2 (~1,8 GB) é baixado.
+
+**Preparar a amostra:**
+
+1. Grave 20 a 30 segundos falando normalmente, em ambiente silencioso, sem música
+   ao fundo. Serve o Gravador de Voz do Windows ou o celular.
+2. Abra o workflow `dublagem_com_clonagem_de_voz.json`.
+3. No nó **4a. SUA VOZ**, preencha `caminho_do_audio` com o caminho do arquivo
+   (aceita `.wav`, `.mp3`, `.m4a` e também vídeos — o áudio é extraído).
+4. Em `salvar_como`, dê um nome (ex.: `minha_voz`) para guardar o perfil.
+5. Execute.
+
+O nó remove os silêncios, escolhe sozinho o trecho com melhor fala, normaliza e
+salva em `ComfyUI\models\vozes_clonadas\`. O relatório avisa se o áudio estiver
+saturado ou baixo demais.
+
+**Reutilizar depois:** no nó 4a, mude `origem` para `voz_salva` e escolha o perfil
+na lista (recarregue a página com F5 para a lista atualizar).
+
+**O que esperar:**
+
+| Ponto | Situação |
+|---|---|
+| Idiomas | pt, en, es, fr, de, it, pl, tr, ru, nl, cs, ar, zh-cn, ja, hu, ko, hi |
+| Velocidade | Bem mais lento que `edge_tts` — é um modelo local, roda na sua GPU |
+| Qualidade | Mantém o timbre de forma convincente, mas é menos estável que as vozes da Microsoft/Google em vídeos longos |
+| Licença | O XTTS-v2 usa a Coqui Public Model License, que **restringe uso comercial** |
+
+> Clonar a voz de outra pessoa exige o consentimento dela.
+
 ### Glossário
 No nó 3, campo `glossario`, uma regra por linha:
 ```
