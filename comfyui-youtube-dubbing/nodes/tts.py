@@ -189,15 +189,75 @@ def _synth_google(text, out_mp3, voice, api_key, locale, rate_pct=0, pitch_semit
     return out_mp3
 
 
+def _isin_compat(elements, test_elements):
+    """Reposicao de transformers.pytorch_utils.isin_mps_friendly.
+
+    A funcao foi removida no transformers 5, mas o coqui-tts ainda a importa.
+    Fora do backend MPS da Apple - ou seja, em CUDA e CPU - torch.isin faz
+    exatamente o mesmo trabalho.
+    """
+    import torch
+
+    test = test_elements
+    if not torch.is_tensor(test):
+        test = torch.tensor(test, device=getattr(elements, "device", None))
+    device = getattr(elements, "device", None)
+    if device is not None and device.type == "mps":
+        # o MPS nao implementa torch.isin; comparamos por broadcast
+        return (elements.unsqueeze(-1) == test.reshape(1, 1, -1)).any(dim=-1)
+    return torch.isin(elements, test)
+
+
+def _patch_transformers_for_xtts():
+    """Repoe o simbolo que o coqui-tts espera, quando o transformers e o 5.x.
+
+    Preferimos o remendo a exigir um downgrade do transformers: o ComfyUI e
+    outros nos compartilham a mesma instalacao, e rebaixa-lo quebraria modelos
+    mais novos que dependem da versao 5.
+    """
+    try:
+        from transformers import pytorch_utils  # type: ignore
+    except Exception:
+        return False
+    if hasattr(pytorch_utils, "isin_mps_friendly"):
+        return False
+    pytorch_utils.isin_mps_friendly = _isin_compat
+    return True
+
+
 def _load_xtts():
     if "model" in _XTTS_CACHE:
         return _XTTS_CACHE["model"]
+
+    remendado = _patch_transformers_for_xtts()
     try:
         from TTS.api import TTS  # type: ignore
-    except ImportError:
+    except ImportError as exc:
+        texto = str(exc)
+        if "transformers" in texto or "isin_mps_friendly" in texto:
+            import transformers  # type: ignore
+
+            raise RuntimeError(
+                "O coqui-tts nao e compativel com o transformers %s instalado aqui.\n"
+                "Erro: %s\n\n"
+                "Como resolver: instale uma versao do transformers da serie 4.57, que "
+                "ainda tem o que o coqui-tts espera:\n"
+                '  python_embeded\\python.exe -m pip install "transformers>=4.57,<5"\n\n'
+                "Atencao: outros nos do ComfyUI podem precisar do transformers 5. Se algo "
+                "parar de funcionar, volte com:\n"
+                "  python_embeded\\python.exe -m pip install -U transformers"
+                % (getattr(transformers, "__version__", "?"), texto)
+            )
         raise RuntimeError(
             "Clonagem de voz requer o Coqui TTS. Rode: pip install -U coqui-tts\n"
-            "(na primeira execucao o modelo XTTS-v2, ~1.8 GB, sera baixado)"
+            "(na primeira execucao o modelo XTTS-v2, ~1.8 GB, sera baixado)\n"
+            "Erro original: %s" % texto
+        )
+
+    if remendado:
+        print(
+            "[Dublagem IA] transformers 5 detectado: reposto 'isin_mps_friendly' "
+            "para o coqui-tts funcionar sem downgrade."
         )
     device = "cpu"
     try:

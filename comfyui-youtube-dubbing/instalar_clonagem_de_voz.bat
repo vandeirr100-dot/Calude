@@ -112,7 +112,20 @@ if /i "!BAIXAR!"=="s" (
   echo.
   echo Baixando... isso demora. Nao feche esta janela.
   echo.
-  "!PY!" -c "from TTS.api import TTS; TTS('tts_models/multilingual/multi-dataset/xtts_v2'); print('Modelo pronto.')"
+  set "BAIXADOR="
+  for %%D in (
+    "%~dp0ComfyUI\custom_nodes\comfyui-youtube-dubbing\ferramentas\baixar_modelo_xtts.py"
+    "%~dp0..\ComfyUI\custom_nodes\comfyui-youtube-dubbing\ferramentas\baixar_modelo_xtts.py"
+    "%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui-youtube-dubbing\ferramentas\baixar_modelo_xtts.py"
+  ) do (
+    if not defined BAIXADOR if exist "%%~fD" set "BAIXADOR=%%~fD"
+  )
+  if defined BAIXADOR (
+    "!PY!" "!BAIXADOR!"
+  ) else (
+    echo [AVISO] Nao achei o script de download no pacote.
+    echo         Sem problema: o modelo sera baixado sozinho no primeiro uso.
+  )
   echo.
 )
 
