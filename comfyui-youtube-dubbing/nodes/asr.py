@@ -49,6 +49,9 @@ def _repo_for(model_name):
         return None
 
 
+MODEL_FILES = ("config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.*")
+
+
 def _download_hint(model_name, error):
     """Mensagem acionavel para falhas de rede/TLS ao buscar o modelo."""
     text = str(error)
@@ -57,34 +60,45 @@ def _download_hint(model_name, error):
 
     linhas = ["Nao foi possivel baixar o modelo '%s' do Hugging Face." % model_name]
 
-    if "CERTIFICATE_VERIFY_FAILED" in text or "self-signed certificate" in text:
+    tls = "CERTIFICATE_VERIFY_FAILED" in text or "self-signed certificate" in text
+    queda = any(
+        token in text
+        for token in ("RemoteProtocolError", "Server disconnected", "IncompleteRead", "Timeout")
+    )
+
+    if tls:
         linhas += [
             "",
             "Causa: a conexao HTTPS esta sendo interceptada (antivirus com 'varredura HTTPS'",
             "ligada - Kaspersky, ESET, Avast, Bitdefender - ou proxy/firewall da rede).",
             "",
-            "Como resolver, da opcao mais simples para a mais tecnica:",
-            "  1. Desligue a varredura HTTPS/SSL do antivirus, baixe o modelo uma vez e",
-            "     ligue de volta. O modelo fica salvo e nao sera baixado de novo.",
-            "  2. Baixe o modelo pelo navegador e use 'caminho_do_modelo':",
+            "Solucao: desligue a varredura HTTPS/SSL do antivirus, baixe o modelo uma vez e",
+            "ligue de volta; ou aponte SSL_CERT_FILE para o certificado raiz dele.",
         ]
-        if repo:
-            linhas.append("     https://huggingface.co/%s/tree/main" % repo)
-            linhas.append(
-                "     Salve os arquivos numa pasta e aponte 'caminho_do_modelo' para ela."
-            )
-        linhas += [
-            "  3. Aponte a variavel de ambiente SSL_CERT_FILE (ou REQUESTS_CA_BUNDLE) para o",
-            "     certificado raiz do seu antivirus/proxy antes de iniciar o ComfyUI.",
-        ]
-    else:
+    elif queda:
         linhas += [
             "",
-            "Verifique a conexao com a internet. Se estiver sem rede, baixe o modelo em outra",
-            "maquina e use o campo 'caminho_do_modelo'.",
+            "Causa: a conexao caiu no meio do download (antivirus/firewall cortando, rede",
+            "instavel, ou o Hugging Face bloqueado).",
+            "",
+            "Tente, nesta ordem:",
+            "  1. Executar de novo - o download continua de onde parou.",
+            "  2. Um modelo menor primeiro ('base' tem ~150 MB).",
+            "  3. Liberar o python do ComfyUI no antivirus/firewall, ou desliga-lo por um",
+            "     momento (o ComfyUI usa python_embeded\\python.exe).",
+            "  4. Usar um espelho: defina HF_ENDPOINT=https://hf-mirror.com antes de abrir",
+            "     o ComfyUI.",
         ]
-        if repo:
-            linhas.append("Repositorio: https://huggingface.co/%s" % repo)
+    else:
+        linhas += ["", "Verifique a conexao com a internet."]
+
+    linhas += ["", "Sempre funciona: baixar o modelo pelo navegador e usar 'caminho_do_modelo'."]
+    if repo:
+        linhas += [
+            "  Pagina:  https://huggingface.co/%s/tree/main" % repo,
+            "  Baixe:   %s" % ", ".join(MODEL_FILES),
+            "  Salve numa pasta e aponte 'caminho_do_modelo' do no 2 para ela.",
+        ]
 
     linhas += ["", "Pasta dos modelos: %s" % whisper_models_dir(), "", "Erro original: %s" % text]
     return "\n".join(linhas)
@@ -121,6 +135,10 @@ def _load_faster_whisper(model_name, device, compute_type, model_path=""):
                 "ConnectionError",
                 "Max retries",
                 "self-signed certificate",
+                "RemoteProtocolError",
+                "Server disconnected",
+                "IncompleteRead",
+                "ReadTimeout",
             )
         ):
             raise RuntimeError(_download_hint(model_name, exc))
