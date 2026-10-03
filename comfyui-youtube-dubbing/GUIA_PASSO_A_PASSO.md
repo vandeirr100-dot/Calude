@@ -317,6 +317,7 @@ Kubernetes, Grafana, Prometheus, DevOps, SRE
 | `yt-dlp falhou ao baixar` | Rode `pip install -U yt-dlp` (o YouTube muda com frequência). Vídeo com restrição de idade/login: nó 1, `cookies_do_navegador = chrome` com a sessão logada |
 | `Nenhum backend de transcricao instalado` | `<seu-python> -m pip install faster-whisper` |
 | Erro de cuDNN / CUDA na transcrição | Nó 2: `dispositivo = cpu` resolve na hora. Para manter a GPU: `python_embeded\python.exe -m pip install nvidia-cudnn-cu12` |
+| `Cannot run the event loop while another loop is running` | Versao antiga dos nos. Substitua a pasta pelo ZIP atualizado (que inclui `utils/aio.py`) e reinicie o ComfyUI |
 | Voz sai muda ou falha | O `edge-tts` precisa acessar `speech.platform.bing.com`. Em rede restrita, use `piper` ou `xtts_v2_clonagem` |
 | `demucs falhou` | `pip install -U demucs`, ou nó 5a: `metodo = nenhuma` |
 | `413 - Request Entity Too Large` | Você usou o botão de upload do nó 1. Não envie o vídeo pelo navegador — veja "Usando um vídeo do seu computador" abaixo |
