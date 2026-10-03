@@ -302,11 +302,15 @@ e o `locale` (ex.: `pt-BR`), execute, e copie o nome para `voz_personalizada` no
 
 Permite dublar o vídeo com a **sua** voz (ou outra que você tenha o direito de usar).
 
-**Instalação (uma vez):**
+**Instalação (uma vez):** copie o `instalar_clonagem_de_voz.bat` que acompanha o
+pacote para dentro da pasta `ComfyUI_windows_portable` e dê dois cliques. Ele acha o
+Python certo, instala o `coqui-tts`, confere se o PyTorch continuou intacto (e
+restaura com CUDA se não tiver) e oferece baixar o modelo XTTS-v2 (~1,8 GB) na hora.
+
+Quem preferir fazer à mão:
 ```bat
 "%USERPROFILE%\Downloads\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\python_embeded\python.exe" -m pip install coqui-tts
 ```
-No primeiro uso o modelo XTTS-v2 (~1,8 GB) é baixado.
 
 **Preparar a amostra:**
 
