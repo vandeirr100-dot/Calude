@@ -69,31 +69,58 @@ class YouTubeDubSource:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "FLOAT", "STRING")
     RETURN_NAMES = ("video_path", "audio_path", "titulo", "duracao_s", "info")
     DESCRIPTION = (
-        "Cole o link do YouTube OU escolha um video da pasta ComfyUI/input. "
-        "Devolve o caminho do video e do audio extraido."
+        "Cole o link do YouTube OU use um video local. Para arquivo local, prefira "
+        "'caminho_absoluto' ou copie o video para ComfyUI/input: o botao de upload passa "
+        "pelo servidor e falha com 'Request Entity Too Large' em videos grandes."
     )
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "modo": (["youtube_url", "arquivo_local"], {"default": "youtube_url"}),
+                "modo": (
+                    ["youtube_url", "arquivo_local"],
+                    {
+                        "default": "youtube_url",
+                        "tooltip": "youtube_url: baixa pelo link. arquivo_local: usa um video do seu computador.",
+                    },
+                ),
                 "youtube_url": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": False,
                         "placeholder": "https://www.youtube.com/watch?v=...",
+                        "tooltip": "So e usado quando modo = youtube_url.",
                     },
                 ),
-                "arquivo_local": (list_input_videos(), {"video_upload": True}),
+                "arquivo_local": (
+                    list_input_videos(),
+                    {
+                        "video_upload": True,
+                        "tooltip": (
+                            "Lista os videos de ComfyUI/input. O botao de upload serve apenas "
+                            "para arquivos pequenos: o ComfyUI limita o tamanho do envio "
+                            "(erro 413). Para videos grandes, copie o arquivo para a pasta "
+                            "ComfyUI/input e recarregue a pagina, ou use 'caminho_absoluto'."
+                        ),
+                    },
+                ),
                 "resolucao_maxima": (["1080", "720", "480", "best"], {"default": "1080"}),
                 "usar_cache": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "caminho_absoluto": (
                     "STRING",
-                    {"default": "", "placeholder": "/caminho/para/video.mp4 (opcional)"},
+                    {
+                        "default": "",
+                        "placeholder": r"C:\Users\voce\Videos\meu_video.mp4 (opcional)",
+                        "tooltip": (
+                            "Caminho completo do video no disco. Tem prioridade sobre "
+                            "'arquivo_local' e evita qualquer upload - e o jeito mais "
+                            "confiavel para arquivos grandes."
+                        ),
+                    },
                 ),
                 "cookies_do_navegador": (
                     ["nenhum", "chrome", "firefox", "edge", "brave", "chromium", "safari"],
@@ -232,8 +259,14 @@ class YouTubeDubSource:
         else:
             if not relative or relative.startswith("<"):
                 raise RuntimeError(
-                    "Nenhum video local selecionado. Coloque o arquivo em ComfyUI/input "
-                    "(ou use o botao de upload do no) ou preencha 'caminho_absoluto'."
+                    "Nenhum video local selecionado. Escolha uma destas opcoes:\n"
+                    "  1. Preencha 'caminho_absoluto' com o caminho completo do arquivo "
+                    "(ex.: C:\\Users\\voce\\Videos\\video.mp4) - recomendado;\n"
+                    "  2. Copie o video para a pasta ComfyUI/input, recarregue a pagina "
+                    "e selecione-o em 'arquivo_local';\n"
+                    "  3. Use 'modo = youtube_url' e cole o link.\n"
+                    "O botao de upload so funciona em arquivos pequenos: o ComfyUI limita "
+                    "o tamanho do envio (erro 413 - Request Entity Too Large)."
                 )
             path = os.path.join(input_dir(), relative)
         if not os.path.exists(path):

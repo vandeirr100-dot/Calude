@@ -196,6 +196,39 @@ ComfyUI/output/dublagem/
 
 ---
 
+## Usando um vídeo do seu computador (sem link do YouTube)
+
+No nó **1**, mude `modo` para `arquivo_local`. A partir daí, **não use o botão
+"escolha o arquivo para enviar"**: ele envia o vídeo pelo navegador até o servidor
+do ComfyUI, que recusa arquivos acima do limite de upload e devolve
+`413 - Request Entity Too Large`. Qualquer vídeo de duração real passa desse limite.
+
+Use uma destas opções:
+
+### Opção A — caminho absoluto (mais simples)
+Preencha o campo `caminho_absoluto` com o caminho completo do arquivo:
+```
+C:\Users\vande\Videos\meu_video.mp4
+```
+Esse campo tem prioridade sobre o `arquivo_local` e não envia nada pela rede.
+Para copiar o caminho no Windows: clique no arquivo com **Shift + botão direito**
+→ *Copiar como caminho*, e cole (remova as aspas).
+
+### Opção B — pasta input
+1. Copie o vídeo para `ComfyUI\input\` pelo Explorador de Arquivos.
+2. Recarregue a página do ComfyUI (**F5**).
+3. O arquivo aparece na lista do campo `arquivo_local`.
+
+### Opção C — aumentar o limite de upload
+Só se você realmente quiser usar o botão de envio. Edite o `.bat` que inicia o
+ComfyUI e acrescente ao final da linha do python:
+```
+--max-upload-size 4096
+```
+(o valor é em MB). Depois reinicie o ComfyUI.
+
+---
+
 ## Parte 7 — Rodar de verdade
 
 Deu certo no teste? Então:
@@ -286,6 +319,7 @@ Kubernetes, Grafana, Prometheus, DevOps, SRE
 | Erro de cuDNN / CUDA na transcrição | Nó 2: `dispositivo = cpu` resolve na hora. Para manter a GPU: `python_embeded\python.exe -m pip install nvidia-cudnn-cu12` |
 | Voz sai muda ou falha | O `edge-tts` precisa acessar `speech.platform.bing.com`. Em rede restrita, use `piper` ou `xtts_v2_clonagem` |
 | `demucs falhou` | `pip install -U demucs`, ou nó 5a: `metodo = nenhuma` |
+| `413 - Request Entity Too Large` | Você usou o botão de upload do nó 1. Não envie o vídeo pelo navegador — veja "Usando um vídeo do seu computador" abaixo |
 | `O arquivo nao tem trilha de audio` | O vídeo baixado veio sem áudio; nó 1: `resolucao_maxima = 720` e tente de novo |
 | Vídeo final sem imagem | Nó 6b: `modo_video = h264_recodificar` |
 | Os nós não aparecem | Veja o terminal do ComfyUI na inicialização; confira a profundidade da pasta (Parte 2) |
