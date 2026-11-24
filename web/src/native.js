@@ -167,3 +167,112 @@ export function openUrl(url) {
 export function appVersion() {
   try { return isNative ? A.appVersion() : 'web'; } catch { return '?'; }
 }
+
+// ================= áudio ao vivo (microfone/alto-falante nativos) =================
+let micH = null;
+window.__nativeMic = (b64, lvl, type, aec) => {
+  const h = micH;
+  if (!h) return;
+  if (type === 'data') h.onData && h.onData(b64, Number(lvl));
+  else h.onEvent && h.onEvent(type, aec);
+};
+export function micStart({ call = false, half = true, chunkMs = 100 } = {}, handlers = {}) {
+  micH = handlers;
+  if (isNative && A.micStart) A.micStart(!!call, !!half, chunkMs);
+  else setTimeout(() => handlers.onEvent && handlers.onEvent('unavailable'), 30);
+}
+export function micStop() {
+  micH = null;
+  if (isNative && A.micStop) A.micStop();
+}
+
+let audioH = {};
+window.__nativeAudio = (type, v, tag) => {
+  if (type === 'level') audioH.onLevel && audioH.onLevel(Number(v), tag);
+  else if (type === 'drained') {
+    lastDrainAt = Date.now();
+    audioH.onDrained && audioH.onDrained(tag);
+    const w = drainWaiters.splice(0);
+    w.forEach((f) => f(tag));
+  }
+};
+const drainWaiters = [];
+let lastDrainAt = 0;
+export const lastDrained = () => lastDrainAt;
+export function onAudio(handlers) { audioH = handlers || {}; }
+export function waitDrained(timeoutMs = 30000) {
+  return new Promise((res) => {
+    drainWaiters.push(res);
+    setTimeout(() => res('timeout'), timeoutMs);
+  });
+}
+
+// reprodutor web (só para testes no navegador)
+const web = {
+  ctx: null, t: 0, rate: 24000, timer: null, playing: false, srcs: [],
+  open(rate) { this.rate = rate; try { this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)(); } catch { this.ctx = null; } this.t = 0; },
+  write(b64) {
+    const bin = atob(b64); const n = bin.length >> 1;
+    const f = new Float32Array(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) { let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); if (v > 32767) v -= 65536; f[i] = v / 32768; sum += f[i] * f[i]; }
+    const lvl = Math.min(1, Math.sqrt(sum / Math.max(1, n)) * 4);
+    const dur = n / this.rate;
+    const now = this.ctx ? this.ctx.currentTime : performance.now() / 1000;
+    const start = Math.max(now, this.t);
+    this.t = start + dur;
+    if (this.ctx) {
+      const buf = this.ctx.createBuffer(1, n, this.rate); buf.copyToChannel(f, 0);
+      const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.ctx.destination); src.start(start);
+      this.srcs.push(src);
+    }
+    this.playing = true;
+    setTimeout(() => window.__nativeAudio('level', lvl, 'web'), Math.max(0, (start - now) * 1000));
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.playing = false; window.__nativeAudio('level', 0, 'web'); window.__nativeAudio('drained', 0, 'web'); }, (this.t - now) * 1000 + 50);
+  },
+  flush() { this.srcs.forEach((s) => { try { s.stop(); } catch { /* ok */ } }); this.srcs = []; this.t = 0; clearTimeout(this.timer); if (this.playing) { this.playing = false; window.__nativeAudio('drained', 0, 'web'); } },
+};
+export function playerOpen(rate = 24000, call = false, tag = 'live') {
+  if (isNative && A.playerOpen) A.playerOpen(rate, !!call, tag); else web.open(rate);
+}
+export function playerWrite(b64) {
+  if (isNative && A.playerWrite) A.playerWrite(b64); else web.write(b64);
+}
+export function playerFlush() {
+  if (isNative && A.playerFlush) A.playerFlush(); else web.flush();
+}
+export function playerClose() {
+  if (isNative && A.playerClose) A.playerClose(); else web.flush();
+}
+export function setCallMode(on) {
+  if (isNative && A.setCallMode) A.setCallMode(!!on);
+}
+
+// gravação para avaliar pronúncia pelo som
+let recH = null;
+window.__nativeRec = (type, data) => {
+  const h = recH;
+  if (!h) return;
+  if (type === 'level') h.onLevel && h.onLevel(Number(data));
+  else if (type === 'speech') h.onSpeech && h.onSpeech();
+  else if (type === 'ready') h.onReady && h.onReady();
+  else {
+    recH = null;
+    if (type === 'done') h.onDone && h.onDone(data);
+    else if (type === 'none') h.onNone && h.onNone();
+    else h.onError && h.onError(data);
+  }
+};
+export const canRecord = isNative && !!(A && A.recordStart);
+export function recordStart(maxMs, handlers) {
+  recH = handlers;
+  if (canRecord) A.recordStart(maxMs);
+  else setTimeout(() => window.__nativeRec('error', 'unavailable'), 30);
+}
+export function recordStop() { if (canRecord) A.recordStop(); }
+export function recordCancel() { recH = null; if (canRecord) A.recordCancel(); }
+
+export function setReminder(enabled, hour, minute, title, text) {
+  if (isNative && A.setReminder) A.setReminder(!!enabled, hour | 0, minute | 0, title, text);
+}

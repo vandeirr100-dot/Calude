@@ -23,7 +23,7 @@
 <header id="top">
   <div class="badge">
     <div class="logo"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="currentColor"/></svg></div>
-    <div><b>Lia</b><small id="status">Professora de inglês</small></div>
+    <div><b><span id="tutorName">Lia</span><span id="liveBadge">AO VIVO</span></b><small id="status">Professora de inglês</small></div>
   </div>
   <button id="btnMenu" class="icon-btn" aria-label="Configurações">
     <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
@@ -85,16 +85,23 @@
 
 <section id="home">
   <div class="card">
-    <h1>Oi! Eu sou a Lia</h1>
-    <p>Sua professora de inglês que vê o seu dia a dia pela câmera e te ensina com o que você está fazendo agora.</p>
+    <div class="tutors" id="tutorPick">
+      <button data-t="lia"><span class="dot" style="background:#7a3a24"></span>Lia</button>
+      <button data-t="maya"><span class="dot" style="background:#2b1a12"></span>Maya</button>
+      <button data-t="ben"><span class="dot" style="background:#2f4f86"></span>Ben</button>
+    </div>
+    <h1 id="homeTitle">Oi! Eu sou a Lia</h1>
     <div class="stats"><span id="streak">🔥 0 dias</span><span id="wordCount">📚 0 palavras</span><span id="levelChip">Iniciante</span></div>
+    <div class="goal"><div class="goal-top"><b>Meta da semana</b><span id="goalTxt">0 de 60 min</span></div><div class="bar"><i id="goalBar"></i></div></div>
+    <label class="mini-lbl">Escolha a aula</label>
+    <div class="scen" id="scenList"></div>
     <button id="btnStart" class="big-btn">
       <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="currentColor"/><path d="M15.5 10.5L21 7v10l-5.5-3.5z" fill="currentColor"/></svg>
       <span>Começar aula</span>
     </button>
     <div class="row">
-      <button id="btnReview" class="ghost-btn">Revisar palavras</button>
-      <button id="btnHomeWords" class="ghost-btn">Minhas palavras</button>
+      <button id="btnReview" class="ghost-btn">🔁 Revisar <b id="dueN">0</b></button>
+      <button id="btnHomeWords" class="ghost-btn">📚 Minhas palavras</button>
     </div>
   </div>
 </section>
@@ -103,23 +110,40 @@
   <div class="sheet-body">
     <div class="sheet-head"><h2>Configurações</h2><button class="close" data-close="settings">✕</button></div>
 
-    <label>Inteligência artificial (o "cérebro" da Lia)</label>
+    <h3>Inteligência artificial</h3>
+    <label>Provedor (o "cérebro" da professora)</label>
     <select id="setProvider">
-      <option value="gemini">Google Gemini — tem cota gratuita</option>
+      <option value="gemini">Google Gemini — recomendado (ao vivo + voz natural)</option>
       <option value="anthropic">Anthropic Claude</option>
       <option value="openai">OpenAI (ChatGPT)</option>
     </select>
-
     <label>Chave da API</label>
     <div class="keyrow">
       <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole sua chave aqui">
       <button id="btnShowKey" class="mini">👁</button>
     </div>
     <a id="keyHelp" class="help" href="#">Como conseguir uma chave →</a>
-
-    <label>Modelo</label>
+    <label>Modelo (modo clássico)</label>
     <input id="setModel" type="text" spellcheck="false">
-    <small class="hint">Pode deixar o padrão. Se a empresa lançar um modelo novo, é só trocar o nome aqui.</small>
+
+    <h3>Conversa</h3>
+    <label>Modo de conversa</label>
+    <div class="seg" id="setMode">
+      <button data-v="live">⚡ Ao vivo</button>
+      <button data-v="classic">Clássico (turnos)</button>
+    </div>
+    <small class="hint">Ao vivo: conversa em tempo real, voz humana, responde em ~1 s e escuta sua pronúncia pelo som. Precisa do Google Gemini. Clássico: funciona com qualquer IA.</small>
+    <label class="check"><input id="setDuplex" type="checkbox"> Poder interromper a professora falando (usa cancelamento de eco do celular; o som pode ficar um pouco mais baixo)</label>
+    <label>Modelo ao vivo</label>
+    <input id="setLiveModel" type="text" spellcheck="false">
+
+    <label>Correção dos seus erros</label>
+    <div class="seg" id="setCorrect">
+      <button data-v="realtime">Em tempo real</button>
+      <button data-v="light">Só erros grandes</button>
+      <button data-v="off">Sem correção</button>
+    </div>
+    <label class="check"><input id="setSoundPron" type="checkbox"> Avaliar a pronúncia pelo som da sua voz (Gemini)</label>
 
     <label>Seu nível</label>
     <div class="seg" id="setLevel">
@@ -129,42 +153,59 @@
       <button data-v="avancado">Avançado</button>
     </div>
 
-    <label>Velocidade da voz da Lia: <b id="rateVal">0.9</b></label>
+    <h3>Voz e som</h3>
+    <label>Voz no modo clássico e ao tocar nas frases</label>
+    <div class="seg" id="setVoiceMode">
+      <button data-v="natural">Natural (IA)</button>
+      <button data-v="android">Do Android</button>
+    </div>
+    <label>Velocidade da voz do Android: <b id="rateVal">0.9</b></label>
     <input id="setRate" type="range" min="0.6" max="1.3" step="0.05">
-
+    <label>Voz do Android em inglês</label>
+    <select id="setVoice"><option value="">Automática</option></select>
     <label>Volume extra da voz: <b id="boostVal">+9</b></label>
     <input id="setBoost" type="range" min="0" max="18" step="3">
     <button id="btnTestVoice" class="ghost-btn" style="width:100%;margin-top:8px">🔊 Testar a voz</button>
-    <small class="hint">A Lia usa o volume de MÍDIA do celular. Se continuar baixo, aumente o volume com os botões laterais com o app aberto.</small>
 
-    <label>Voz em inglês</label>
-    <select id="setVoice"><option value="">Automática</option></select>
-
-    <label>Correção dos seus erros</label>
-    <div class="seg" id="setCorrect">
-      <button data-v="realtime">Em tempo real</button>
-      <button data-v="light">Só erros grandes</button>
-      <button data-v="off">Sem correção</button>
-    </div>
-    <small class="hint">Em tempo real: a Lia corrige cada frase que você fala (gramática, palavra errada e pronúncia), mostra a forma certa e pede para você repetir.</small>
-
-    <label>Olhar pela câmera sozinha quando você ficar em silêncio</label>
+    <h3>Câmera</h3>
+    <label class="check"><input id="setCamDefault" type="checkbox"> Começar a aula com a câmera ligada</label>
+    <label>No modo clássico, olhar sozinha quando você ficar em silêncio</label>
     <select id="setAutoLook">
       <option value="0">Desligado</option>
       <option value="30">A cada 30 segundos</option>
       <option value="60">A cada 1 minuto</option>
       <option value="120">A cada 2 minutos</option>
     </select>
+    <label class="check"><input id="setHandsFree" type="checkbox"> Conversa contínua no modo clássico (escuta sozinha depois de falar)</label>
 
-    <label class="check"><input id="setHandsFree" type="checkbox"> Conversa contínua: a Lia escuta sozinha depois de falar (sem apertar botão)</label>
-    <label class="check"><input id="setCamDefault" type="checkbox"> Começar a aula com a câmera ligada</label>
+    <h3>Metas e lembrete</h3>
+    <label>Meta de estudo por semana</label>
+    <select id="setGoal">
+      <option value="30">30 minutos</option>
+      <option value="60">1 hora</option>
+      <option value="90">1 h 30</option>
+      <option value="150">2 h 30</option>
+      <option value="300">5 horas</option>
+    </select>
+    <label class="check"><input id="setReminder" type="checkbox"> Lembrete diário de revisão</label>
+    <input id="setReminderTime" type="time" value="19:00">
+
+    <h3>Economia</h3>
+    <div class="usage" id="usageBox"></div>
+    <label>Preço médio da IA por 1 milhão de tokens (US$) — opcional, para estimar o custo</label>
+    <input id="setPrice" type="text" inputmode="decimal" placeholder="ex.: 0.50">
+    <label>Gráficos da professora</label>
+    <div class="seg" id="setQuality">
+      <button data-v="high">Alta qualidade</button>
+      <button data-v="low">Leve (celular simples)</button>
+    </div>
 
     <div class="row">
       <button id="btnTest" class="ghost-btn">Testar conexão</button>
       <button id="btnSave" class="big-btn small">Salvar</button>
     </div>
     <p id="testResult" class="hint"></p>
-    <p class="hint">Sua chave fica salva só neste celular. As fotos da câmera são enviadas apenas para a IA escolhida, no momento de cada resposta.</p>
+    <p class="hint">Sua chave fica salva só neste celular. As fotos e o áudio vão apenas para a IA escolhida, durante a aula.</p>
     <div class="row">
       <button id="btnReload" class="ghost-btn">↺ Reiniciar o app</button>
       <button id="btnResetAll" class="ghost-btn danger">Apagar progresso</button>
@@ -176,8 +217,44 @@
 <section id="vocab" class="sheet hidden">
   <div class="sheet-body">
     <div class="sheet-head"><h2>Minhas palavras</h2><button class="close" data-close="vocab">✕</button></div>
-    <p class="hint">Toque no alto-falante para ouvir. Elas também aparecem nas revisões com a Lia.</p>
+    <p class="hint">Toque no alto-falante para ouvir. A revisão espaçada traz cada palavra de volta no dia certo, antes de você esquecer.</p>
+    <button id="btnReviewFromList" class="big-btn small" style="margin-top:10px">🔁 Revisar agora</button>
     <ul id="vocabList"></ul>
+  </div>
+</section>
+
+<section id="review" class="sheet hidden">
+  <div class="sheet-body">
+    <div class="sheet-head"><h2>Revisão</h2><button class="close" data-close="review">✕</button></div>
+    <p class="hint" id="revProg"></p>
+    <div class="flash" id="flash">
+      <div class="f-q">Como se diz em inglês?</div>
+      <div class="f-pt" id="fPt"></div>
+      <div class="f-en hidden" id="fEn"></div>
+      <div class="f-heard" id="fHeard"></div>
+    </div>
+    <div class="row" id="revAsk">
+      <button id="btnRevSpeak" class="ghost-btn">🎤 Falar</button>
+      <button id="btnRevShow" class="big-btn small">Mostrar resposta</button>
+    </div>
+    <div class="grades hidden" id="revGrades">
+      <button data-g="0" class="g0">Errei</button>
+      <button data-g="1" class="g1">Difícil</button>
+      <button data-g="2" class="g2">Acertei</button>
+      <button data-g="3" class="g3">Fácil</button>
+    </div>
+    <div id="revDone" class="hidden">
+      <p class="done-big">🎉 Revisão concluída!</p>
+      <button class="big-btn small" data-close="review">Fechar</button>
+    </div>
+  </div>
+</section>
+
+<section id="report" class="sheet hidden">
+  <div class="sheet-body">
+    <div class="sheet-head"><h2>Resumo da aula</h2><button class="close" data-close="report">✕</button></div>
+    <div id="reportBody"></div>
+    <button class="big-btn small" data-close="report" style="margin-top:14px">Fechar</button>
   </div>
 </section>
 

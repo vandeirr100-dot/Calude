@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     private int boostMb = 900;
     private String playingId = null;
     private final Map<String, SynthJob> jobs = new ConcurrentHashMap<>();
+    private AudioEngine engine;
 
     private static class SynthJob {
         String text;
@@ -99,6 +100,7 @@ public class MainActivity extends Activity {
         // botões de volume controlam o volume de MÍDIA (é por onde a Lia fala)
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         audio = (AudioManager) getSystemService(AUDIO_SERVICE);
+        engine = new AudioEngine(this, this::js);
         getWindow().setStatusBarColor(Color.parseColor("#3d2216"));
         getWindow().setNavigationBarColor(Color.parseColor("#22130c"));
 
@@ -347,6 +349,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         releasePlayer();
+        try { if (engine != null) engine.release(); } catch (Exception ignored) { }
         try { if (tts != null) tts.shutdown(); } catch (Exception ignored) { }
         try { if (recognizer != null) recognizer.destroy(); } catch (Exception ignored) { }
         pool.shutdownNow();
@@ -383,13 +386,16 @@ public class MainActivity extends Activity {
         try {
             Set<Voice> voices = tts.getVoices();
             if (voices == null) return null;
-            if (wanted != null && !wanted.isEmpty()) {
+            boolean male = wanted != null && wanted.startsWith("auto:male");
+            if (wanted != null && !wanted.isEmpty() && !wanted.startsWith("auto:")) {
                 for (Voice v : voices) if (v.getName().equals(wanted)) return v;
             }
             // automático: prefere voz feminina local de boa qualidade no idioma
             Voice best = null;
             int bestScore = -1;
-            String[] female = {"sfg", "tpf", "tpc", "female", "#female", "iob", "iog", "afh", "pt-br-x-pte", "pt-br-x-afs"};
+            String[] female = male
+                    ? new String[]{"iom", "tpd", "iol", "male", "#male", "gbd", "rjs", "pt-br-x-ptd", "pt-br-x-ptc"}
+                    : new String[]{"sfg", "tpf", "tpc", "female", "#female", "iob", "iog", "afh", "pt-br-x-pte", "pt-br-x-afs"};
             for (Voice v : voices) {
                 Locale vl = v.getLocale();
                 if (vl == null || !vl.getLanguage().equals(loc.getLanguage())) continue;
@@ -521,7 +527,8 @@ public class MainActivity extends Activity {
             main.post(() -> {
                 if (!ttsReady) { ttsEvent("error", id, 0, 0); return; }
                 Locale loc = lang != null && lang.toLowerCase(Locale.ROOT).startsWith("pt") ? new Locale("pt", "BR") : Locale.US;
-                Voice v = pickVoice(loc, loc.getLanguage().equals("en") ? voiceName : "");
+                String vn = voiceName == null ? "" : voiceName;
+                Voice v = pickVoice(loc, loc.getLanguage().equals("en") || vn.startsWith("auto:") ? vn : "");
                 if (v != null) tts.setVoice(v); else tts.setLanguage(loc);
                 tts.setSpeechRate(rate <= 0 ? 1f : rate);
                 tts.setPitch(1.05f);
@@ -551,8 +558,72 @@ public class MainActivity extends Activity {
             });
         }
 
+        // ---------- áudio ao vivo ----------
+        @JavascriptInterface
+        public void setCallMode(final boolean on) {
+            main.post(() -> {
+                engine.setCallMode(on);
+                setVolumeControlStream(on ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+            });
+        }
+
+        @JavascriptInterface
+        public void micStart(boolean call, boolean halfDuplex, int chunkMs) {
+            if (!hasPerm(Manifest.permission.RECORD_AUDIO)) {
+                main.post(() -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_PERMS));
+                js("window.__nativeMic&&window.__nativeMic('','0','permission')");
+                return;
+            }
+            engine.micStart(call, halfDuplex, chunkMs);
+        }
+
+        @JavascriptInterface
+        public void micStop() { engine.micStop(); }
+
+        @JavascriptInterface
+        public void playerOpen(int rate, boolean call, String tag) { engine.playerOpen(rate, call, tag); }
+
+        @JavascriptInterface
+        public void playerWrite(String b64) {
+            try { engine.playerWrite(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)); } catch (Exception ignored) { }
+        }
+
+        @JavascriptInterface
+        public void playerFlush() { engine.playerFlush(); }
+
+        @JavascriptInterface
+        public void playerClose() { engine.playerClose(); }
+
+        @JavascriptInterface
+        public void recordStart(int maxMs) {
+            if (!hasPerm(Manifest.permission.RECORD_AUDIO)) {
+                main.post(() -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_PERMS));
+                js("window.__nativeRec&&window.__nativeRec('error','permission')");
+                return;
+            }
+            engine.recordStart(maxMs);
+        }
+
+        @JavascriptInterface
+        public void recordStop() { engine.recordStop(); }
+
+        @JavascriptInterface
+        public void recordCancel() { engine.recordCancel(); }
+
+        // ---------- lembrete diário ----------
+        @JavascriptInterface
+        public void setReminder(boolean enabled, int hour, int minute, String title, String text) {
+            main.post(() -> {
+                if (enabled && Build.VERSION.SDK_INT >= 33 && !hasPerm("android.permission.POST_NOTIFICATIONS")) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_PERMS + 1);
+                }
+                ReminderReceiver.schedule(MainActivity.this, enabled, hour, minute, title, text);
+            });
+        }
+
         @JavascriptInterface
         public void setBoost(int millibels) {
+            engine.setBoost(millibels);
             boostMb = Math.max(0, Math.min(2000, millibels));
             main.post(() -> {
                 try {

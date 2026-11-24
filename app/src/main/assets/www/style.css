@@ -152,3 +152,47 @@ body.has-corr #tutorLine { font-size: 15px; max-height: 5.4em; overflow: hidden;
 #callBar { flex-wrap: nowrap; gap: 8px; }
 #callBar .chip { padding: 8px 11px; font-size: 13px; }
 .ghost-btn.danger { color: #b3261e; }
+
+/* ---- v2: professores, trilhas, metas, revisão, relatório ---- */
+#home .card { max-height: 74vh; overflow-y: auto; padding-top: 14px; }
+#home h1 { font-size: 22px; margin: 6px 0 8px; }
+.tutors { display: flex; gap: 8px; }
+.tutors button { flex: 1; padding: 8px 6px; border-radius: 14px; background: #efe5dc; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.tutors button.on { background: var(--accent); color: #fff; }
+.tutors .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; border: 2px solid #fff; }
+.goal { background: #f6efe8; border-radius: 14px; padding: 10px 12px; margin-bottom: 10px; }
+.goal-top { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
+.bar { height: 9px; background: #e6d8cc; border-radius: 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2fbf71, #7c5cff); border-radius: 6px; transition: width .4s; }
+.mini-lbl { display: block; font-weight: 700; font-size: 14px; margin: 4px 0 6px; }
+.scen { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, auto); grid-auto-columns: 46%; gap: 8px; margin: 0 -4px 12px; padding: 0 4px 4px; overflow-x: auto; scroll-snap-type: x mandatory; }
+.scen button { scroll-snap-align: start; text-align: left; padding: 9px 10px; border-radius: 14px; background: #f3ebe4; border: 2px solid transparent; font-size: 13px; line-height: 1.25; color: var(--ink); }
+.scen button b { display: block; font-size: 14px; }
+.scen button small { color: #7a6a60; }
+.scen button.on { border-color: var(--accent); background: #efe9ff; }
+.sheet h3 { margin: 22px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+.usage { background: #f6efe8; border-radius: 12px; padding: 10px 12px; margin-top: 10px; font-size: 14px; line-height: 1.5; }
+#setReminderTime { margin-top: 8px; font: inherit; font-size: 16px; padding: 10px; border-radius: 12px; border: 1.5px solid #e0d2c6; }
+.flash { margin-top: 12px; background: #fff; border: 2px solid #eee2d8; border-radius: 20px; padding: 26px 16px; text-align: center; min-height: 190px; }
+.f-q { color: #7a6a60; font-size: 14px; }
+.f-pt { font-size: 26px; font-weight: 800; margin: 10px 0; }
+.f-en { font-size: 28px; font-weight: 800; color: var(--accent); margin-top: 8px; cursor: pointer; }
+.f-heard { color: #7a6a60; font-size: 14px; margin-top: 8px; }
+.f-heard.ok { color: #13894c; font-weight: 700; }
+.grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.grades button { padding: 14px 4px; border-radius: 14px; font-weight: 750; color: #fff; }
+.g0 { background: #e5574f; } .g1 { background: #e3a02d; } .g2 { background: #2fbf71; } .g3 { background: #7c5cff; }
+.done-big { font-size: 22px; font-weight: 800; text-align: center; margin: 24px 0; }
+.rep-sec { margin-top: 14px; }
+.rep-sec h4 { margin: 0 0 6px; font-size: 15px; }
+.rep-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.rep-kpis div { background: #f6efe8; border-radius: 14px; padding: 10px 6px; text-align: center; font-size: 12px; color: #7a6a60; }
+.rep-kpis b { display: block; font-size: 22px; color: var(--ink); }
+.rep-list { list-style: none; padding: 0; margin: 0; }
+.rep-list li { padding: 8px 0; border-bottom: 1px solid #eee2d8; font-size: 14.5px; }
+.rep-list .bad { color: #b3261e; text-decoration: line-through; }
+.rep-list .good { color: #13894c; font-weight: 700; cursor: pointer; }
+.rep-list small { display: block; color: #7a6a60; }
+#vocabList li .box { font-size: 11px; background: #efe9ff; color: var(--accent); border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+#liveBadge { display: none; margin-left: 6px; font-size: 11px; font-weight: 800; background: #e5574f; color: #fff; border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
+body.live #liveBadge { display: inline-block; }

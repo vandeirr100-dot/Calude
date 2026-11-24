@@ -22,6 +22,12 @@ aparelho (grátis). Só o texto da conversa e a foto do momento vão para a IA e
 
 ## Como funciona
 
+- **Conversa ao vivo** (Gemini Live): voz humana, resposta em ~1 s, ela ouve sua pronúncia pelo som e atualiza a tela (frase para repetir, correção, nota) enquanto fala.
+- **3 professores**: Lia, Maya e Ben.
+- **Trilhas**: dia a dia, explorar a casa, restaurante, viagem, entrevista, compras, conhecer pessoas, médico, direções e revisão.
+- **Revisão espaçada** com cartões e lembrete diário; **meta semanal**; **resumo** no fim de cada aula.
+- **Economia**: só manda foto quando a cena muda; mostra o uso de tokens; modo gráfico leve.
+
 - **Avatar 3D próprio**, feito 100% em código (three.js): piscadas, olhar, expressões e boca sincronizada com a fala.
 - **Voz**: motor de fala do Android (inglês e português). Dá para escolher a voz nas Configurações.
 - **Ouvir**: reconhecimento de voz do Android, com nota de pronúncia nas frases para repetir.

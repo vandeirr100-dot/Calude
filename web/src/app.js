@@ -1,8 +1,17 @@
-import { Avatar } from './avatar.js';
+import { Avatar, PROFILES } from './avatar.js';
 import * as N from './native.js';
-import { PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch } from './llm.js';
+import {
+  PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch,
+  liveSystemPrompt, ttsGemini, assessPronunciation,
+} from './llm.js';
+import { connectLive, LIVE_TOOLS, LIVE_MODELS } from './live.js';
+import {
+  SCENARIOS, scenarioById, srsInit, srsGrade, dueWords, boxLabel, today, weekMinutes, monthKey,
+  sceneSignature, sceneDiff,
+} from './lessons.js';
 
 const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- armazenamento ----------
 const store = {
@@ -10,26 +19,47 @@ const store = {
   set(k, v) { try { localStorage.setItem('lia.' + k, JSON.stringify(v)); } catch { /* ok */ } },
 };
 
-const DEFAULTS = { provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60, handsFree: true, camDefault: true, correct: 'realtime', boost: 9 };
+const DEFAULTS = {
+  provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
+  handsFree: true, camDefault: true, correct: 'realtime', boost: 9,
+  mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
+  tutor: 'lia', scenario: 'daily', goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
+};
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
-const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] || '', model: S.models[S.provider] || PROVIDERS[S.provider].model });
+const VOICES = { lia: 'Aoede', maya: 'Kore', ben: 'Puck' };
 
-let vocab = store.get('vocab', []);
+const geminiKey = () => (S.keys.gemini || '').trim();
+const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] || '', model: S.models[S.provider] || PROVIDERS[S.provider].model });
+const liveAvailable = () => S.mode === 'live' && S.provider === 'gemini' && !!geminiKey();
+const naturalVoice = () => S.voiceMode === 'natural' && !!geminiKey();
+const tutorName = () => PROFILES[S.tutor].name;
+const androidVoice = () => S.voice || (PROFILES[S.tutor].gender === 'm' ? 'auto:male' : 'auto:female');
+
+let vocab = store.get('vocab', []).map(srsInit);
 let days = store.get('days', []);
+let mins = store.get('mins', {});
+let usage = store.get('usage', {}); // { 'AAAA-MM': {in, out} }
 
 // ---------- avatar ----------
-const avatar = new Avatar($('avatar'));
+const avatar = new Avatar($('avatar'), S.tutor, S.quality);
 window.lia = { avatar };
 
-// ---------- estado da chamada ----------
+// ---------- estado ----------
 const st = {
-  inCall: false, busy: false, speaking: false, listening: false,
+  inCall: false, busy: false, speaking: false, listening: false, practicing: false,
   camOn: false, facing: 'user', stream: null, speakerOn: true,
-  lang: 'en-US', repeat: null, repeatTries: 0, history: [],
-  lastActivity: Date.now(), silences: 0, callId: 0, startedAt: 0, newWords: 0, hearId: 0, practicing: false, corr: null,
+  lang: 'en-US', repeat: null, repeatTries: 0, history: [], corr: null,
+  lastActivity: Date.now(), silences: 0, callId: 0, hearId: 0, startedAt: 0,
+  live: null, liveMode: false, micOn: true, dropAudio: false, turnOpen: false,
+  tutorText: '', userText: '', lastSig: null, lastSigAt: 0, frameTimer: null,
+  scenario: scenarioById(S.scenario), sess: null,
 };
 
-// ---------- UI helpers ----------
+function newSession() {
+  return { start: Date.now(), phrases: [], scores: [], corrections: [], words: [], tokens: { in: 0, out: 0 }, problems: {} };
+}
+
+// ---------- helpers de UI ----------
 let toastT;
 function toast(msg, ms = 3200) {
   const t = $('toast');
@@ -37,25 +67,64 @@ function toast(msg, ms = 3200) {
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
 }
 function setStatus(s) { $('status').textContent = s; }
-function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function addUsage(u) {
+  if (!u) return;
+  const k = monthKey();
+  usage[k] = usage[k] || { in: 0, out: 0 };
+  usage[k].in += u.in || 0; usage[k].out += u.out || 0;
+  if (st.sess) { st.sess.tokens.in += u.in || 0; st.sess.tokens.out += u.out || 0; }
+  store.set('usage', usage);
+}
+function costText(tokens) {
+  const price = parseFloat(String(S.price).replace(',', '.'));
+  const k = (tokens / 1000).toFixed(tokens < 10000 ? 1 : 0);
+  if (!price) return `${k} mil tokens`;
+  const usd = (tokens / 1e6) * price;
+  return `${k} mil tokens ≈ US$ ${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
+}
 
 function renderHome() {
-  const today = new Date().toISOString().slice(0, 10);
-  let streak = 0;
   const set = new Set(days);
+  let streak = 0;
   const d = new Date();
-  if (!set.has(today)) d.setDate(d.getDate() - 1);
-  while (set.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
+  const key = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  if (!set.has(key(d))) d.setDate(d.getDate() - 1);
+  while (set.has(key(d))) { streak++; d.setDate(d.getDate() - 1); }
   $('streak').textContent = `🔥 ${streak} ${streak === 1 ? 'dia' : 'dias'}`;
   $('wordCount').textContent = `📚 ${vocab.length} ${vocab.length === 1 ? 'palavra' : 'palavras'}`;
   const lv = { iniciante: 'Iniciante', basico: 'Básico', intermediario: 'Intermediário', avancado: 'Avançado' };
   $('levelChip').textContent = `🎯 ${lv[S.level]}`;
-  const hasKey = !!S.keys[S.provider];
-  $('btnStart').querySelector('span').textContent = hasKey ? 'Começar aula' : 'Configurar para começar';
-  $('btnReview').disabled = !vocab.length;
+  const wk = weekMinutes(mins);
+  $('goalTxt').textContent = `${wk} de ${S.goal} min${wk >= S.goal ? ' ✅' : ''}`;
+  $('goalBar').style.width = `${Math.min(100, (wk / S.goal) * 100)}%`;
+  const due = dueWords(vocab).length;
+  $('dueN').textContent = due;
   $('btnReview').style.opacity = vocab.length ? 1 : 0.5;
+  const hasKey = !!S.keys[S.provider];
+  $('btnStart').querySelector('span').textContent = hasKey ? `Começar aula com ${tutorName()}` : 'Configurar para começar';
+  const p = PROFILES[S.tutor];
+  $('homeTitle').textContent = `Oi! Eu sou ${p.gender === 'm' ? 'o' : 'a'} ${p.name}`;
+  $('tutorName').textContent = p.name;
+  document.querySelectorAll('#tutorPick button').forEach((b) => b.classList.toggle('on', b.dataset.t === S.tutor));
+  $('scenList').innerHTML = SCENARIOS.map((s) => `<button data-s="${s.id}" class="${s.id === st.scenario.id ? 'on' : ''}"><b>${s.emoji} ${esc(s.title)}</b><small>${esc(s.desc)}</small></button>`).join('');
   const b = $('wordsBadge');
-  b.textContent = vocab.length; b.classList.toggle('hidden', !vocab.length);
+  b.textContent = due || vocab.length; b.classList.toggle('hidden', !vocab.length);
+  scheduleReminder();
+}
+
+let lastReminderSig = '';
+function scheduleReminder() {
+  const [h, m] = String(S.reminderTime || '19:00').split(':').map(Number);
+  const next = new Date(); next.setHours(h || 19, m || 0, 0, 0);
+  if (next < new Date()) next.setDate(next.getDate() + 1);
+  const n = dueWords(vocab, next.getTime()).length;
+  const text = n ? `Você tem ${n} ${n === 1 ? 'palavra' : 'palavras'} para revisar hoje. São só uns minutinhos!` : 'Que tal 5 minutinhos de conversa em inglês hoje?';
+  const sig = `${S.reminder}|${h}|${m}|${tutorName()}|${text}`;
+  if (sig === lastReminderSig) return;
+  lastReminderSig = sig;
+  N.setReminder(!!S.reminder, h || 19, m || 0, `Hora do inglês com ${tutorName()}! 🇺🇸`, text);
 }
 
 // ---------- câmera ----------
@@ -69,6 +138,7 @@ async function camStart() {
     v.srcObject = st.stream;
     await v.play().catch(() => {});
     st.camOn = true;
+    st.lastSig = null;
     $('pip').classList.remove('hidden');
     $('pip').classList.toggle('mirror', st.facing === 'user');
   } catch (e) {
@@ -84,22 +154,35 @@ function camStop() {
   $('pip').classList.add('hidden');
   $('btnCam').classList.add('off');
 }
-function captureFrame() {
+function captureFrame(W = 640, q = 0.66) {
   if (!st.camOn) return null;
   const v = $('cam');
   if (!v.videoWidth) return null;
-  const W = 640, scale = Math.min(1, W / Math.max(v.videoWidth, v.videoHeight));
+  const scale = Math.min(1, W / Math.max(v.videoWidth, v.videoHeight));
   const c = document.createElement('canvas');
   c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
   c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
   const pip = $('pip');
   pip.classList.remove('snap'); void pip.offsetWidth; pip.classList.add('snap');
-  return c.toDataURL('image/jpeg', 0.66).split(',')[1];
+  return c.toDataURL('image/jpeg', q).split(',')[1];
+}
+// só manda foto quando a cena mudou (economia)
+function frameIfChanged(maxAgeMs = 60000, force = false) {
+  if (!st.camOn) return { img: null, same: false };
+  const sig = sceneSignature($('cam'));
+  const diff = sceneDiff(sig, st.lastSig);
+  if (!force && sig && st.lastSig && diff < 0.07 && Date.now() - st.lastSigAt < maxAgeMs) return { img: null, same: true };
+  const img = captureFrame();
+  if (img) { st.lastSig = sig; st.lastSigAt = Date.now(); }
+  return { img, same: false };
 }
 
-// ---------- legendas ----------
+// ---------- legendas e cartões ----------
 function showTutor(parts, nowIdx = -1) {
   $('tutorLine').innerHTML = parts.map((p, i) => `<span class="seg ${p.lang} ${i === nowIdx ? 'now' : ''}">${esc(p.text)}</span>`).join(' ');
+}
+function showTutorText(text) {
+  $('tutorLine').innerHTML = text ? `<span class="seg en">${esc(text)}</span>` : '';
 }
 function showUser(text) { $('userLine').textContent = text ? `Você: ${text}` : ''; }
 function showRepeat(r) {
@@ -119,71 +202,145 @@ function markRepeat(marks, final) {
 }
 function showCorr(c) {
   const box = $('corrBox');
-  if (!c) { box.classList.add('hidden'); document.body.classList.remove('has-corr'); return; }
+  if (!c) { box.classList.add('hidden'); document.body.classList.remove('has-corr'); st.corr = null; return; }
   $('corrWrong').textContent = c.said || '…';
+  $('corrWrong').parentElement.classList.toggle('hidden', !c.said);
   $('corrRight').textContent = c.correct;
   $('corrExp').textContent = c.explain || '';
   box.classList.remove('hidden');
   document.body.classList.add('has-corr');
   st.corr = c;
+  if (st.sess) st.sess.corrections.push(c);
 }
 function showScore(res) {
   const el = $('score');
   el.className = res.score >= 80 ? 'good' : res.score >= 50 ? 'mid' : 'bad';
   const emoji = res.score >= 80 ? '🎉' : res.score >= 50 ? '👍' : '🔁';
   let html = `${emoji} Pronúncia: ${res.score}%`;
-  if (res.missed.length && res.score < 100) html += ` · treine: ${res.missed.map((w) => `<span class="miss">${esc(w)}</span>`).join(' ')}`;
+  if (res.missed && res.missed.length && res.score < 100) html += ` · treine: ${res.missed.map((w) => `<span class="miss">${esc(w)}</span>`).join(' ')}`;
+  if (res.tip) html += `<div style="font-weight:500;font-size:13px;color:#6b5a50;margin-top:3px">💡 ${esc(res.tip)}</div>`;
   el.innerHTML = html;
+  el.classList.remove('hidden');
+  if (st.sess) {
+    st.sess.scores.push(res.score);
+    for (const w of res.missed || []) { const k = String(w).toLowerCase().replace(/[^a-z']/g, ''); if (k) st.sess.problems[k] = (st.sess.problems[k] || 0) + 1; }
+  }
+  if (res.score >= 80) { avatar.setMood('happy'); avatar.nodOnce(1); }
+}
+function setRepeat(text, pt) {
+  if (!text) { st.repeat = null; showRepeat(null); return; }
+  if (!st.repeat || st.repeat.text !== text) {
+    st.repeatTries = 0;
+    if (st.sess) st.sess.phrases.push(text);
+  }
+  st.repeat = { text, pt };
+  showRepeat(st.repeat);
+}
+function addWords(list) {
+  let added = 0;
+  for (const w of list || []) {
+    if (!w || !w.en) continue;
+    const k = String(w.en).toLowerCase().trim();
+    if (!vocab.some((v) => v.en.toLowerCase() === k)) {
+      vocab.push(srsInit({ en: String(w.en).trim(), pt: String(w.pt || '').trim(), ts: Date.now() }));
+      added++;
+      if (st.sess) st.sess.words.push(w);
+    }
+  }
+  if (added) {
+    store.set('vocab', vocab);
+    renderHome();
+    toast(`📚 +${added} ${added === 1 ? 'palavra nova salva' : 'palavras novas salvas'}`, 2000);
+  }
 }
 
-// ---------- falar ----------
+// ---------- falar (modo clássico) ----------
+const ttsCache = new Map();
+async function playNatural(text, slow, callId) {
+  const key = `${S.tutor}|${slow ? 1 : 0}|${text}`;
+  let a = ttsCache.get(key);
+  if (!a) {
+    a = await ttsGemini(geminiKey(), text, VOICES[S.tutor], slow);
+    ttsCache.set(key, a);
+    if (ttsCache.size > 40) ttsCache.delete(ttsCache.keys().next().value);
+  }
+  if (callId != null && callId !== st.callId) return;
+  N.playerFlush();
+  await sleep(60);
+  const t0 = Date.now();
+  // em blocos de ~0,2 s para a boca acompanhar o volume
+  const bin = a.b64;
+  const CH = Math.floor((a.rate * 2 * 0.2 * 4) / 3 / 4) * 4;
+  for (let i = 0; i < bin.length; i += CH) N.playerWrite(bin.slice(i, i + CH));
+  const durMs = ((bin.length * 3) / 4 / 2 / a.rate) * 1000;
+  await sleep(durMs * 0.9);
+  while (N.lastDrained() < t0 + durMs * 0.6 && Date.now() - t0 < durMs + 4000) {
+    if (callId != null && callId !== st.callId) break;
+    await sleep(80);
+  }
+}
+
 async function speakParts(parts, callId) {
   st.speaking = true;
   avatar.setMode('speaking');
   setStatus('falando…');
+  if (naturalVoice() && st.speakerOn) {
+    showTutor(parts);
+    try {
+      await playNatural(parts.map((p) => p.text).join(' '), false, callId);
+      st.speaking = false; avatar.speakingUntil = 0; st.lastActivity = Date.now();
+      return;
+    } catch (e) {
+      toast('Voz natural indisponível agora; usando a voz do Android.', 2500);
+    }
+  }
   for (let i = 0; i < parts.length; i++) {
     if (callId !== st.callId) break;
     const p = parts[i];
     showTutor(parts, i);
     if (!st.speakerOn) {
-      // sem som: anima a boca pelo tempo estimado
       const ms = 400 + p.text.length * 55 / S.rate;
       const ws = p.text.split(/\s+/);
       const per = ms / ws.length;
-      for (const w of ws) { if (callId !== st.callId) break; avatar.speakWord(w, per * 0.9); await new Promise((r) => setTimeout(r, per)); }
+      for (const w of ws) { if (callId !== st.callId) break; avatar.speakWord(w, per * 0.9); await sleep(per); }
       continue;
     }
-    let gotWord = false;
-    const fallback = setTimeout(() => { if (!gotWord) avatar.word = null; }, 500);
     const lang = p.lang === 'pt' ? 'pt-BR' : 'en-US';
     const rate = p.lang === 'pt' ? Math.min(1.1, S.rate + 0.1) : S.rate;
-    await N.speak(p.text, lang, rate, p.lang === 'en' ? S.voice : '', {
-      onWord: (w) => {
-        gotWord = true;
-        const ms = (90 + w.length * 62) / rate;
-        avatar.speakWord(w, ms);
-      },
+    await N.speak(p.text, lang, rate, androidVoice(), {
+      onWord: (w) => avatar.speakWord(w, (90 + w.length * 62) / rate),
     });
-    clearTimeout(fallback);
   }
   st.speaking = false;
   avatar.speakingUntil = 0;
   st.lastActivity = Date.now();
 }
 
-// ---------- ouvir ----------
+// ---------- ouvir (modo clássico) ----------
 function setMicUi(live) {
   $('btnMic').classList.toggle('live', live);
-  $('btnMic').classList.remove('off');
+  $('btnMic').classList.toggle('off', st.liveMode && !st.micOn);
 }
 function startListening() {
-  if (!st.inCall || st.busy || st.speaking) return;
+  if (!st.inCall || st.liveMode || st.busy || st.speaking) return;
   N.stopListening();
   st.listening = true;
   setMicUi(true);
   avatar.setMode('listening');
-  setStatus(st.lang === 'pt-BR' ? 'ouvindo (português)…' : 'ouvindo…');
   const callId = st.callId;
+  // pronúncia pelo som: grava o áudio quando há frase para repetir
+  if (st.repeat && st.lang === 'en-US' && S.soundPron && geminiKey() && N.canRecord) {
+    setStatus('ouvindo… (avaliando pelo som)');
+    N.recordStart(9000, {
+      onLevel: (v) => { $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, v * 0.4)).toFixed(3)); avatar.setMicLevel(v); },
+      onSpeech: () => showUser('🎙️ …'),
+      onDone: (wav) => { if (callId === st.callId) onRecorded(wav); },
+      onNone: () => { if (callId === st.callId) { stopListeningUi(); onSilence(); } },
+      onError: (e) => { if (callId === st.callId) { stopListeningUi(); toast('Não consegui gravar o áudio: ' + e); } },
+    });
+    return;
+  }
+  setStatus(st.lang === 'pt-BR' ? 'ouvindo (português)…' : 'ouvindo…');
   N.listen(st.lang, {
     onPartial: (t) => {
       showUser(t);
@@ -213,34 +370,61 @@ function startListening() {
     },
   });
 }
+async function onRecorded(wav) {
+  stopListeningUi();
+  st.silences = 0;
+  st.lastActivity = Date.now();
+  setStatus('avaliando sua pronúncia…');
+  avatar.setMode('thinking');
+  const target = st.repeat.text;
+  try {
+    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, wav, target, S.level);
+    addUsage(r.usage);
+    showUser(r.heard || '…');
+    const marks = r.words.length ? r.words.map((w) => w.ok) : liveMatch(target, r.heard);
+    markRepeat(marks, true);
+    const missed = r.words.filter((w) => !w.ok).map((w) => w.w);
+    st.repeatTries++;
+    showScore({ score: r.score, missed, tip: r.tip });
+    ask('user', { text: r.heard || '(inaudível)', lang: 'en-US', repeat: target, score: r.score, missed, issue: r.issue });
+  } catch (e) {
+    toast(e.message || String(e), 4000);
+    avatar.setMode('idle');
+    setStatus('toque no microfone para falar');
+  }
+}
 function stopListeningUi() {
   st.listening = false;
   setMicUi(false);
   $('btnMic').style.setProperty('--lvl', 1);
   avatar.setMicLevel(0);
-  if (st.inCall && !st.busy && !st.speaking) { avatar.setMode('idle'); setStatus('toque no microfone para falar'); }
+  if (st.inCall && !st.busy && !st.speaking && !st.liveMode) { avatar.setMode('idle'); setStatus('toque no microfone para falar'); }
 }
 function onSilence() {
   st.silences++;
   if (!S.handsFree || !st.inCall) return;
   if (st.silences < 3) setTimeout(() => { if (!st.listening) startListening(); }, 300);
-  else setStatus(S.autoLook && st.camOn ? 'toque no microfone para falar (ou espere a Lia puxar assunto)' : 'toque no microfone para falar');
+  else setStatus('toque no microfone para falar');
 }
 
-// ---------- turno com a IA ----------
+// ---------- turno com a IA (modo clássico) ----------
 async function ask(kind, data = {}) {
-  if (!st.inCall || st.busy) return;
+  if (!st.inCall || st.busy || st.liveMode) return;
   N.stopListening();
   st.listening = false; setMicUi(false);
   st.busy = true;
   const callId = st.callId;
   avatar.setMode('thinking');
   setStatus('pensando…');
-  const img = captureFrame();
-  const text = eventText(kind, { ...data, hasImage: !!img });
+  const force = kind === 'look' || kind === 'start' || kind === 'review';
+  const { img, same } = frameIfChanged(60000, force);
+  let text = eventText(kind, { ...data, hasImage: !!img || same });
+  if (same) text += '\n(A cena da câmera não mudou desde a última foto.)';
   let reply;
   try {
-    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct }), st.history.slice(-14), text, img);
+    const due = dueWords(vocab).slice(0, 12);
+    const scen = st.scenario.prompt + (st.scenario.id === 'review' && due.length ? ` Words due: ${due.map((w) => `${w.en} (${w.pt})`).join(', ')}.` : '');
+    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen }), st.history.slice(-14), text, img);
   } catch (e) {
     st.busy = false;
     if (callId !== st.callId) return;
@@ -251,30 +435,13 @@ async function ask(kind, data = {}) {
   }
   if (callId !== st.callId) return;
   st.busy = false;
+  addUsage(reply.usage);
   st.history.push({ role: 'user', text: img ? text + '\n[foto da câmera enviada]' : text });
-  st.history.push({ role: 'assistant', text: JSON.stringify(reply) });
+  st.history.push({ role: 'assistant', text: JSON.stringify({ ...reply, usage: undefined }) });
   if (st.history.length > 30) st.history.splice(0, st.history.length - 30);
-  st.busy = false;
 
-  // palavras novas
-  let added = 0;
-  for (const w of reply.new_words) {
-    const k = w.en.toLowerCase();
-    if (!vocab.some((v) => v.en.toLowerCase() === k)) { vocab.push({ en: w.en, pt: w.pt, ts: Date.now() }); added++; }
-  }
-  if (added) {
-    st.newWords += added;
-    store.set('vocab', vocab);
-    renderHome();
-    toast(`📚 +${added} ${added === 1 ? 'palavra nova salva' : 'palavras novas salvas'}`, 2000);
-  }
-
-  // frase para repetir
-  if (reply.repeat) {
-    if (!st.repeat || st.repeat.text !== reply.repeat) st.repeatTries = 0;
-    st.repeat = { text: reply.repeat, pt: reply.repeat_pt };
-  } else st.repeat = null;
-  showRepeat(st.repeat);
+  addWords(reply.new_words);
+  setRepeat(reply.repeat, reply.repeat_pt);
   showCorr(reply.correction);
   if (reply.correction) avatar.setMood('neutral'); else avatar.setMood(reply.mood);
   showUser('');
@@ -295,64 +462,229 @@ function onUserSpeech(text, alts) {
       st.repeatTries++;
       showScore(res);
       markRepeat(liveMatch(st.repeat.text, res.heard), true);
-      $('score').classList.remove('hidden');
-      if (res.score >= 80) { avatar.setMood('happy'); avatar.nodOnce(1); }
       Object.assign(data, { repeat: st.repeat.text, score: res.score, missed: res.missed });
     }
   }
   ask('user', data);
 }
 
-// ---------- ouvir pronúncia (tocar na frase) ----------
+// ---------- modo AO VIVO ----------
+async function startLive(kind) {
+  st.liveMode = true;
+  document.body.classList.add('live');
+  setStatus('conectando ao vivo…');
+  avatar.setMode('thinking');
+  N.setCallMode(S.duplex);
+  N.playerOpen(24000, S.duplex, 'live');
+  const callId = st.callId;
+  const due = dueWords(vocab);
+  let scen = st.scenario.prompt;
+  if (kind === 'review' || st.scenario.id === 'review') scen = scenarioById('review').prompt;
+  let sess;
+  try {
+    sess = await connectLive({
+      key: geminiKey(),
+      voice: VOICES[S.tutor],
+      system: liveSystemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, due }),
+      tools: LIVE_TOOLS,
+      onAudio: (b64) => {
+        if (callId !== st.callId || st.dropAudio) return;
+        if (!st.turnOpen) {
+          // começou uma nova fala da professora
+          st.turnOpen = true;
+          st.tutorText = '';
+          finishUserUtterance();
+        }
+        if (st.speakerOn) N.playerWrite(b64);
+        st.speaking = true;
+        avatar.setMode('speaking');
+        setStatus('falando…');
+      },
+      onOutput: (t) => {
+        if (callId !== st.callId || st.dropAudio) return;
+        st.tutorText = (st.tutorText + t).replace(/\s+/g, ' ');
+        showTutorText(st.tutorText.trim().slice(-220));
+      },
+      onInput: (t) => {
+        if (callId !== st.callId) return;
+        if (st.turnOpen && S.duplex) { /* interrompendo */ }
+        st.userText = (st.userText + t).replace(/\s+/g, ' ');
+        const u = st.userText.trim();
+        showUser(u);
+        st.lastActivity = Date.now();
+        if (st.repeat) markRepeat(liveMatch(st.repeat.text, u), false);
+      },
+      onInterrupted: () => {
+        if (callId !== st.callId) return;
+        N.playerFlush();
+        st.turnOpen = false;
+      },
+      onTurnComplete: () => {
+        if (callId !== st.callId) return;
+        st.turnOpen = false;
+        st.dropAudio = false;
+        st.lastActivity = Date.now();
+      },
+      onToolCall: (calls) => handleToolCalls(calls, callId),
+      onUsage: (u) => addUsage({ in: u.promptTokenCount || 0, out: (u.responseTokenCount || 0) + (u.thoughtsTokenCount || 0) }),
+      onReconnect: () => toast('Conexão restabelecida ✔', 1500),
+      onClosed: (why) => {
+        if (callId !== st.callId || !st.inCall) return;
+        toast(`A conversa ao vivo caiu (${why}). Toque em Reiniciar para voltar.`, 6000);
+        setStatus('desconectado');
+        avatar.setMode('idle'); avatar.setMood('sad');
+      },
+    }, S.liveModel);
+  } catch (e) {
+    if (callId !== st.callId) return;
+    const msg = String(e.message || e);
+    N.playerClose(); N.setCallMode(false);
+    st.liveMode = false;
+    document.body.classList.remove('live');
+    if (/api key|API_KEY|permission|PERMISSION/i.test(msg)) {
+      toast('Chave do Gemini inválida para o modo ao vivo. Confira nas Configurações.', 6000);
+      setStatus('erro');
+      return;
+    }
+    updateLangChip();
+    toast(`Modo ao vivo indisponível agora (${msg.slice(0, 80)}). Usando o modo clássico.`, 5000);
+    N.playerOpen(24000, false, 'tts');
+    ask(kind);
+    return;
+  }
+  if (callId !== st.callId) { sess.close(); return; }
+  st.live = sess;
+  updateLangChip();
+  if (S.liveModel !== sess.model) { S.liveModel = sess.model; store.set('settings', S); }
+  // primeira imagem + início da aula
+  const first = st.camOn ? captureFrame(640, 0.6) : null;
+  if (first) { sess.sendImage(first); st.lastSig = sceneSignature($('cam')); st.lastSigAt = Date.now(); }
+  sess.sendText(eventText(kind === 'review' ? 'review' : 'start', { hasImage: !!first }));
+  liveMicStart();
+  // vídeo: manda quadro só quando a cena muda (e no máximo a cada 3 s)
+  clearInterval(st.frameTimer);
+  st.frameTimer = setInterval(() => {
+    if (!st.live || !st.camOn || callId !== st.callId) return;
+    const sig = sceneSignature($('cam'));
+    const changed = sceneDiff(sig, st.lastSig) > 0.07;
+    const stale = Date.now() - st.lastSigAt > (st.scenario.id === 'explore' ? 6000 : 20000);
+    if (changed || stale) {
+      const f = captureFrame(512, 0.6);
+      if (f && st.live.sendImage(f)) { st.lastSig = sig; st.lastSigAt = Date.now(); }
+    }
+  }, 3000);
+}
+
+function liveMicStart() {
+  if (!st.live || !st.micOn) return;
+  const callId = st.callId;
+  N.micStart({ call: S.duplex, half: !S.duplex, chunkMs: 100 }, {
+    onData: (b64, lvl) => {
+      if (callId !== st.callId || !st.live) return;
+      st.live.sendAudio(b64);
+      $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, lvl * 0.45)).toFixed(3));
+      avatar.setMicLevel(lvl);
+    },
+    onEvent: (type) => {
+      if (type === 'start') { setMicUi(true); }
+      else if (type === 'permission') toast('Permita o uso do microfone para o app.');
+      else if (type === 'error' || type === 'unavailable') toast('Não consegui abrir o microfone.');
+    },
+  });
+  setMicUi(true);
+}
+
+function finishUserUtterance() {
+  const u = st.userText.trim();
+  st.userText = '';
+  if (u && st.repeat) markRepeat(liveMatch(st.repeat.text, u), true);
+}
+
+function handleToolCalls(calls, callId) {
+  const responses = [];
+  for (const c of calls) {
+    const a = c.args || {};
+    try {
+      if (c.name === 'show_phrase') setRepeat(String(a.phrase || ''), String(a.translation_pt || ''));
+      else if (c.name === 'show_correction') { showCorr({ said: String(a.said || ''), correct: String(a.correct || ''), explain: String(a.explanation_pt || '') }); avatar.setMood('neutral'); }
+      else if (c.name === 'show_pronunciation') {
+        const missed = Array.isArray(a.problem_words) ? a.problem_words.map(String) : [];
+        const score = Math.max(0, Math.min(100, Math.round(Number(a.score) || 0)));
+        if (st.repeat) {
+          const bad = new Set(missed.map((w) => w.toLowerCase().replace(/[^a-z']/g, '')));
+          markRepeat(st.repeat.text.split(/\s+/).filter(Boolean).map((w) => !bad.has(w.toLowerCase().replace(/[^a-z']/g, ''))), true);
+        }
+        st.repeatTries++;
+        showScore({ score, missed, tip: String(a.tip_pt || '') });
+      } else if (c.name === 'save_words') addWords(Array.isArray(a.words) ? a.words : []);
+    } catch { /* ignora argumentos estranhos */ }
+    responses.push({ id: c.id, name: c.name, response: { result: 'ok' }, scheduling: 'SILENT' });
+  }
+  if (st.live && callId === st.callId) st.live.sendToolResponse(responses);
+}
+
+function stopLive() {
+  clearInterval(st.frameTimer);
+  N.micStop();
+  if (st.live) { st.live.close(); st.live = null; }
+  N.playerClose();
+  N.setCallMode(false);
+  st.liveMode = false;
+  document.body.classList.remove('live');
+}
+
+// ---------- tocar na frase para ouvir ----------
 let lastHear = { text: '', at: 0 };
 async function practiceSpeak(text, opts = {}) {
   text = String(text || '').trim();
   if (!text) return;
-  if (st.busy) { toast('Espere a Lia terminar de pensar…', 1200); return; }
-  // segundo toque na mesma frase em até 6 s = mais devagar
+  if (st.busy) { toast('Espere terminar de pensar…', 1200); return; }
   const now = Date.now();
   const slow = opts.slow || (lastHear.text === text && now - lastHear.at < 6000);
   lastHear = { text, at: now };
-  if (st.speaking) { st.callId++; N.stopSpeaking(); st.speaking = false; }
-  N.stopListening(); st.listening = false; setMicUi(false);
   const myId = ++st.hearId;
-  const rate = slow ? Math.max(0.5, S.rate - 0.3) : S.rate;
+  if (st.liveMode) {
+    st.dropAudio = true; // silencia o resto da fala atual da professora
+    N.playerFlush();
+  } else {
+    if (st.speaking) { st.callId++; N.stopSpeaking(); st.speaking = false; }
+    N.stopListening(); st.listening = false; setMicUi(false);
+  }
   avatar.setMode('speaking');
   setStatus(slow ? 'falando devagar…' : 'ouça a pronúncia…');
-  if (opts.highlight) document.querySelectorAll('#repeatText .w').forEach((el) => el.classList.remove('ok', 'miss'));
   const spans = opts.highlight ? [...document.querySelectorAll('#repeatText .w')] : [];
-  let wi = 0;
+  spans.forEach((el) => el.classList.remove('ok', 'miss'));
   st.practicing = true;
-  await N.speak(text, 'en-US', rate, S.voice, {
-    onWord: (w) => {
-      avatar.speakWord(w, (90 + w.length * 62) / rate);
-      spans.forEach((el) => el.classList.remove('playing'));
-      if (spans[wi]) spans[wi].classList.add('playing');
-      wi++;
-    },
-  });
-  spans.forEach((el) => el.classList.remove('playing'));
+  let done = false;
+  if (naturalVoice()) {
+    spans.forEach((el) => el.classList.add('playing'));
+    try { await playNatural(text, slow, null); done = true; } catch { /* usa Android */ }
+    spans.forEach((el) => el.classList.remove('playing'));
+  }
+  if (!done) {
+    let wi = 0;
+    const rate = slow ? Math.max(0.5, S.rate - 0.3) : S.rate;
+    await N.speak(text, 'en-US', rate, androidVoice(), {
+      onWord: (w) => {
+        avatar.speakWord(w, (90 + w.length * 62) / rate);
+        spans.forEach((el) => el.classList.remove('playing'));
+        if (spans[wi]) spans[wi].classList.add('playing');
+        wi++;
+      },
+    });
+    spans.forEach((el) => el.classList.remove('playing'));
+  }
   st.practicing = false;
   if (myId !== st.hearId) return;
   avatar.speakingUntil = 0;
   st.lastActivity = Date.now();
-  if (st.inCall && !st.busy) {
+  if (st.liveMode) {
+    st.dropAudio = false;
+    avatar.setMode('listening'); setStatus('sua vez — pode falar');
+  } else if (st.inCall && !st.busy) {
     if (S.handsFree) startListening();
     else { avatar.setMode('idle'); setStatus('toque no microfone para falar'); }
   } else avatar.setMode('idle');
-}
-
-function restartLesson() {
-  if (!st.inCall) return;
-  st.callId++;
-  st.busy = false; st.speaking = false; st.listening = false;
-  N.stopSpeaking(); N.stopListening(); setMicUi(false);
-  st.history = []; st.repeat = null; st.repeatTries = 0; st.silences = 0;
-  showTutor([]); showUser(''); showRepeat(null); showCorr(null);
-  avatar.setMode('idle'); avatar.setMood('happy'); avatar.nodOnce(0.6);
-  toast('Aula reiniciada ↺', 1400);
-  setStatus('reiniciando…');
-  setTimeout(() => ask('start'), 500);
 }
 
 // ---------- ciclo da chamada ----------
@@ -360,59 +692,173 @@ async function startCall(kind = 'start') {
   if (!S.keys[S.provider]) { openSettings(); toast('Primeiro coloque a chave da IA (é rapidinho).'); return; }
   st.inCall = true;
   st.callId++;
-  st.history = []; st.repeat = null; st.silences = 0; st.newWords = 0; st.startedAt = Date.now();
+  st.history = []; st.repeat = null; st.silences = 0; st.startedAt = Date.now(); st.dropAudio = false; st.turnOpen = false;
+  st.tutorText = ''; st.userText = ''; st.micOn = true;
+  st.sess = newSession();
+  if (kind === 'review') st.scenario = scenarioById('review');
   document.body.classList.add('in-call');
   ['captions', 'controls', 'callBar'].forEach((id) => $(id).classList.remove('hidden'));
   showTutor([]); showUser(''); showRepeat(null); showCorr(null);
   $('btnSpeaker').classList.toggle('off', !st.speakerOn);
   updateLangChip();
-  const today = new Date().toISOString().slice(0, 10);
-  if (!days.includes(today)) { days.push(today); days = days.slice(-400); store.set('days', days); }
+  const t = today();
+  if (!days.includes(t)) { days.push(t); days = days.slice(-400); store.set('days', days); }
   N.ensureAudible();
-  if (S.camDefault) await camStart(); else camStop();
-  // espera a câmera estabilizar um pouco antes da primeira foto
+  N.setBoost(S.boost);
+  const wantCam = st.scenario.cam ? true : S.camDefault;
+  st.facing = st.scenario.cam === 'environment' ? 'environment' : 'user';
+  if (wantCam) await camStart(); else camStop();
   setStatus('conectando…');
-  await new Promise((r) => setTimeout(r, st.camOn ? 900 : 200));
-  ask(kind);
+  await sleep(st.camOn ? 800 : 150);
+  if (liveAvailable()) startLive(kind);
+  else {
+    if (naturalVoice()) N.playerOpen(24000, false, 'tts');
+    ask(kind);
+  }
 }
 
 function endCall() {
   if (!st.inCall) return;
   st.inCall = false; st.callId++;
   st.busy = false; st.speaking = false;
-  N.stopSpeaking(); N.stopListening();
+  if (st.liveMode) stopLive();
+  N.stopSpeaking(); N.stopListening(); N.recordCancel(); N.playerClose();
   camStop();
   avatar.setMode('idle'); avatar.setMood('happy');
   document.body.classList.remove('in-call');
   ['captions', 'controls', 'callBar'].forEach((id) => $(id).classList.add('hidden'));
   showCorr(null);
   setStatus('Professora de inglês');
-  const min = Math.max(1, Math.round((Date.now() - st.startedAt) / 60000));
-  toast(`Aula encerrada: ${min} min${st.newWords ? ` · ${st.newWords} palavras novas` : ''}. See you soon!`, 4000);
+  const minutes = (Date.now() - st.startedAt) / 60000;
+  const t = today();
+  mins[t] = (mins[t] || 0) + minutes;
+  store.set('mins', mins);
   renderHome();
+  showReport(minutes);
+}
+
+function restartLesson() {
+  if (!st.inCall) return;
+  const kind = st.scenario.id === 'review' ? 'review' : 'start';
+  if (st.liveMode) stopLive();
+  st.callId++;
+  st.busy = false; st.speaking = false; st.listening = false;
+  N.stopSpeaking(); N.stopListening(); N.recordCancel(); setMicUi(false);
+  st.history = []; st.repeat = null; st.repeatTries = 0; st.silences = 0; st.dropAudio = false; st.turnOpen = false;
+  showTutor([]); showUser(''); showRepeat(null); showCorr(null);
+  avatar.setMode('idle'); avatar.setMood('happy'); avatar.nodOnce(0.6);
+  toast('Aula reiniciada ↺', 1400);
+  setStatus('reiniciando…');
+  setTimeout(() => {
+    if (!st.inCall) return;
+    if (liveAvailable()) startLive(kind);
+    else { if (naturalVoice()) N.playerOpen(24000, false, 'tts'); ask(kind); }
+  }, 500);
 }
 
 function updateLangChip() {
+  $('langChip').classList.toggle('hidden', st.liveMode);
   $('langChip').innerHTML = `Você fala em: <b>${st.lang === 'en-US' ? 'Inglês' : 'Português'}</b>`;
 }
 
+// ---------- relatório da aula ----------
+function showReport(minutes) {
+  const s = st.sess;
+  if (!s) return;
+  const avg = s.scores.length ? Math.round(s.scores.reduce((a, b) => a + b, 0) / s.scores.length) : null;
+  const probs = Object.entries(s.problems).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+  const tok = s.tokens.in + s.tokens.out;
+  let html = `<div class="rep-kpis">
+    <div><b>${Math.max(1, Math.round(minutes))}</b>minutos</div>
+    <div><b>${s.phrases.length}</b>frases treinadas</div>
+    <div><b>${avg == null ? '—' : avg + '%'}</b>pronúncia média</div>
+  </div>`;
+  if (s.corrections.length) {
+    html += `<div class="rep-sec"><h4>✍️ Correções (${s.corrections.length})</h4><ul class="rep-list">${s.corrections.slice(-8).map((c) =>
+      `<li>${c.said ? `<span class="bad">${esc(c.said)}</span><br>` : ''}<span class="good" data-say="${esc(c.correct)}">✓ ${esc(c.correct)} 🔊</span>${c.explain ? `<small>${esc(c.explain)}</small>` : ''}</li>`).join('')}</ul></div>`;
+  }
+  if (s.words.length) {
+    html += `<div class="rep-sec"><h4>📚 Palavras novas (${s.words.length})</h4><ul class="rep-list">${s.words.map((w) =>
+      `<li><span class="good" data-say="${esc(w.en)}">${esc(w.en)} 🔊</span> — ${esc(w.pt)}</li>`).join('')}</ul></div>`;
+  }
+  if (probs.length) html += `<div class="rep-sec"><h4>🎯 Para treinar</h4><p>${probs.map((w) => `<span class="good" data-say="${esc(w)}">${esc(w)}</span>`).join(' · ')}</p></div>`;
+  if (!s.corrections.length && !s.words.length && !s.phrases.length) html += '<p class="hint" style="margin-top:14px">Aula curtinha! Na próxima, converse um pouco mais para ver seu resumo aqui.</p>';
+  html += `<p class="hint" style="margin-top:14px">Uso de IA nesta aula: ${costText(tok)}</p>`;
+  $('reportBody').innerHTML = html;
+  $('report').classList.remove('hidden');
+}
+
+// ---------- revisão espaçada (cartões) ----------
+let rev = { list: [], i: 0 };
+function openReview() {
+  const due = dueWords(vocab);
+  const list = due.length ? due.slice(0, 20) : vocab.slice().sort(() => Math.random() - 0.5).slice(0, 10);
+  if (!list.length) { toast('Ainda não há palavras. Elas aparecem durante as aulas.'); return; }
+  rev = { list, i: 0 };
+  $('review').classList.remove('hidden');
+  $('revDone').classList.add('hidden');
+  showCard();
+}
+function showCard() {
+  const w = rev.list[rev.i];
+  if (!w) {
+    $('flash').classList.add('hidden'); $('revAsk').classList.add('hidden'); $('revGrades').classList.add('hidden');
+    $('revDone').classList.remove('hidden'); $('revProg').textContent = '';
+    renderHome();
+    return;
+  }
+  $('flash').classList.remove('hidden'); $('revAsk').classList.remove('hidden'); $('revGrades').classList.add('hidden');
+  $('revProg').textContent = `${rev.i + 1} de ${rev.list.length} · ${boxLabel(w.box)}`;
+  $('fPt').textContent = w.pt || '(sem tradução)';
+  $('fEn').textContent = `${w.en} 🔊`;
+  $('fEn').classList.add('hidden');
+  $('fHeard').textContent = ''; $('fHeard').className = 'f-heard';
+}
+function revealCard(ok) {
+  $('fEn').classList.remove('hidden');
+  $('revAsk').classList.add('hidden');
+  $('revGrades').classList.remove('hidden');
+  document.querySelectorAll('#revGrades button').forEach((b) => b.style.outline = (ok === true && b.dataset.g === '2') ? '3px solid #13894c' : '');
+  sayEnglish(rev.list[rev.i].en);
+}
+function sayEnglish(text) {
+  if (naturalVoice()) {
+    N.playerOpen(24000, false, 'tts');
+    playNatural(text, false, null).catch(() => N.speak(text, 'en-US', S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) }));
+  } else N.speak(text, 'en-US', S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) });
+}
+
 // ---------- configurações ----------
+function segSet(id, v) { document.querySelectorAll(`#${id} button`).forEach((b) => b.classList.toggle('on', b.dataset.v === v)); }
+function segGet(id, d) { const b = document.querySelector(`#${id} button.on`); return b ? b.dataset.v : d; }
 function openSettings() {
   $('setProvider').value = S.provider;
   fillProviderFields();
-  document.querySelectorAll('#setLevel button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.level));
+  segSet('setLevel', S.level);
+  segSet('setCorrect', S.correct || 'realtime');
+  segSet('setMode', S.mode);
+  segSet('setVoiceMode', S.voiceMode);
+  segSet('setQuality', S.quality);
+  $('setDuplex').checked = S.duplex;
+  $('setLiveModel').value = S.liveModel || LIVE_MODELS[0];
+  $('setSoundPron').checked = S.soundPron;
   $('setRate').value = S.rate; $('rateVal').textContent = S.rate;
   $('setBoost').value = S.boost; $('boostVal').textContent = boostLabel(S.boost);
   $('setAutoLook').value = String(S.autoLook);
   $('setHandsFree').checked = S.handsFree;
   $('setCamDefault').checked = S.camDefault;
-  document.querySelectorAll('#setCorrect button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.correct || 'realtime')));
-  $('btnResetAll').textContent = 'Apagar progresso';
+  $('setGoal').value = String(S.goal);
+  $('setReminder').checked = S.reminder;
+  $('setReminderTime').value = S.reminderTime;
+  $('setPrice').value = S.price || '';
   $('testResult').textContent = '';
+  $('btnResetAll').textContent = 'Apagar progresso';
   const sel = $('setVoice');
   const voices = N.listVoices().filter((v) => /^en/i.test(v.lang));
   sel.innerHTML = '<option value="">Automática</option>' + voices.map((v) => `<option value="${esc(v.name)}">${esc(prettyVoice(v))}</option>`).join('');
   sel.value = S.voice || '';
+  const m = usage[monthKey()] || { in: 0, out: 0 };
+  $('usageBox').innerHTML = `Uso este mês: <b>${costText(m.in + m.out)}</b><br><small>A professora só manda foto quando a cena muda, para economizar.</small>`;
   $('ver').textContent = `Versão ${N.appVersion()}`;
   $('settings').classList.remove('hidden');
 }
@@ -436,59 +882,116 @@ function readSettingsForm() {
   s.keys[p] = $('setKey').value.trim();
   const m = $('setModel').value.trim();
   if (m && m !== PROVIDERS[p].model) s.models[p] = m; else delete s.models[p];
-  const lv = document.querySelector('#setLevel button.on');
-  s.level = lv ? lv.dataset.v : 'iniciante';
+  s.level = segGet('setLevel', 'iniciante');
+  s.correct = segGet('setCorrect', 'realtime');
+  s.mode = segGet('setMode', 'live');
+  s.voiceMode = segGet('setVoiceMode', 'natural');
+  s.quality = segGet('setQuality', 'high');
+  s.duplex = $('setDuplex').checked;
+  s.liveModel = $('setLiveModel').value.trim() || LIVE_MODELS[0];
+  s.soundPron = $('setSoundPron').checked;
   s.rate = Number($('setRate').value);
   s.boost = Number($('setBoost').value);
   s.voice = $('setVoice').value;
   s.autoLook = Number($('setAutoLook').value);
   s.handsFree = $('setHandsFree').checked;
   s.camDefault = $('setCamDefault').checked;
-  const cm = document.querySelector('#setCorrect button.on');
-  s.correct = cm ? cm.dataset.v : 'realtime';
+  s.goal = Number($('setGoal').value) || 60;
+  s.reminder = $('setReminder').checked;
+  s.reminderTime = $('setReminderTime').value || '19:00';
+  s.price = $('setPrice').value.trim();
   return s;
 }
+function boostLabel(v) { v = Number(v); return v <= 0 ? 'normal' : v <= 6 ? `+${v} (um pouco)` : v <= 12 ? `+${v} (alto)` : `+${v} (máximo)`; }
 
 // ---------- vocabulário ----------
 function openVocab() {
   const ul = $('vocabList');
+  const due = dueWords(vocab).length;
+  $('btnReviewFromList').textContent = due ? `🔁 Revisar agora (${due} para hoje)` : '🔁 Treinar palavras';
+  $('btnReviewFromList').classList.toggle('hidden', !vocab.length);
   if (!vocab.length) ul.innerHTML = '<li class="empty">Ainda não há palavras. Elas aparecem aqui durante as aulas.</li>';
   else {
-    ul.innerHTML = vocab.slice().reverse().map((w, i) => `<li data-i="${vocab.length - 1 - i}"><div class="w"><b>${esc(w.en)}</b><span>${esc(w.pt)}</span></div><button class="say" aria-label="ouvir">🔊</button><button class="del" aria-label="apagar">🗑</button></li>`).join('');
+    ul.innerHTML = vocab.slice().reverse().map((w, i) => `<li data-i="${vocab.length - 1 - i}"><div class="w"><b>${esc(w.en)}<span class="box">${boxLabel(w.box)}</span></b><span>${esc(w.pt)}</span></div><button class="say" aria-label="ouvir">🔊</button><button class="del" aria-label="apagar">🗑</button></li>`).join('');
   }
   $('vocab').classList.remove('hidden');
 }
 
 // ---------- eventos ----------
-$('btnStart').onclick = () => startCall('start');
-$('btnReview').onclick = () => { if (vocab.length) startCall('review'); };
+N.onAudio({
+  onLevel: (v) => avatar.setTalkLevel(v),
+  onDrained: () => {
+    if (st.liveMode && st.inCall) {
+      st.speaking = false;
+      avatar.speakingUntil = 0;
+      if (!st.practicing) { avatar.setMode('listening'); setStatus(st.micOn ? 'sua vez — pode falar' : 'microfone desligado'); }
+    }
+  },
+});
+
+$('btnStart').onclick = () => startCall(st.scenario.id === 'review' ? 'review' : 'start');
+$('btnReview').onclick = openReview;
+$('btnReviewFromList').onclick = () => { $('vocab').classList.add('hidden'); openReview(); };
 $('btnHomeWords').onclick = openVocab;
 $('btnWords').onclick = openVocab;
 $('btnMenu').onclick = openSettings;
 $('btnHang').onclick = endCall;
+$('btnRestart').onclick = restartLesson;
+$('scenList').onclick = (e) => {
+  const b = e.target.closest('button[data-s]');
+  if (!b) return;
+  st.scenario = scenarioById(b.dataset.s);
+  S.scenario = st.scenario.id; store.set('settings', S);
+  renderHome();
+};
+$('tutorPick').onclick = (e) => {
+  const b = e.target.closest('button[data-t]');
+  if (!b || b.dataset.t === S.tutor) return;
+  S.tutor = b.dataset.t; store.set('settings', S);
+  avatar.setProfile(S.tutor);
+  ttsCache.clear();
+  renderHome();
+  setTimeout(() => { avatar.setMood('happy'); avatar.nodOnce(0.8); }, 200);
+};
 $('btnLook').onclick = () => {
-  if (!st.camOn) { toast('Ligue a câmera para a Lia ver o que você está fazendo.'); return; }
+  if (!st.camOn) { toast('Ligue a câmera para eu ver o que você está fazendo.'); return; }
+  if (st.liveMode && st.live) {
+    const f = captureFrame(640, 0.7);
+    if (f) st.live.sendImage(f);
+    st.dropAudio = false;
+    st.live.sendText(eventText('look', { hasImage: !!f }));
+    return;
+  }
   if (st.busy) return;
-  if (st.speaking) { st.callId++; N.stopSpeaking(); st.speaking = false; avatar.speakingUntil = 0; }
+  if (st.speaking) { st.callId++; N.stopSpeaking(); N.playerFlush(); st.speaking = false; avatar.speakingUntil = 0; }
   ask('look');
 };
 $('btnMic').onclick = () => {
   if (!st.inCall) return;
-  if (st.listening) { N.stopListening(); stopListeningUi(); return; }
-  if (st.busy) { toast('A Lia está pensando…', 1200); return; }
-  if (st.speaking) {
-    // interrompe a fala e escuta
-    st.callId++;
-    N.stopSpeaking();
-    st.speaking = false; avatar.speakingUntil = 0;
+  if (st.liveMode) {
+    if (st.speaking) {
+      // interrompe a professora e passa a vez para você
+      st.dropAudio = true;
+      N.playerFlush();
+      st.speaking = false;
+      setStatus('sua vez — pode falar');
+      return;
+    }
+    st.micOn = !st.micOn;
+    if (st.micOn) { liveMicStart(); toast('Microfone ligado', 1000); } else { N.micStop(); setMicUi(false); toast('Microfone desligado', 1000); }
+    setMicUi(st.micOn);
+    return;
   }
+  if (st.listening) { N.stopListening(); N.recordStop(); stopListeningUi(); return; }
+  if (st.busy) { toast('Espere terminar de pensar…', 1200); return; }
+  if (st.speaking) { st.callId++; N.stopSpeaking(); N.playerFlush(); st.speaking = false; avatar.speakingUntil = 0; }
   st.silences = 0;
   startListening();
 };
 $('btnSpeaker').onclick = () => {
   st.speakerOn = !st.speakerOn;
   $('btnSpeaker').classList.toggle('off', !st.speakerOn);
-  if (!st.speakerOn) N.stopSpeaking();
+  if (!st.speakerOn) { N.stopSpeaking(); N.playerFlush(); }
   toast(st.speakerOn ? 'Som ligado' : 'Som desligado (só legendas)', 1400);
 };
 $('btnCam').onclick = () => { if (st.camOn) camStop(); else camStart(); };
@@ -502,21 +1005,26 @@ $('langChip').onclick = () => {
 document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => $(b.dataset.close).classList.add('hidden'); });
 document.querySelectorAll('.sheet').forEach((sh) => sh.addEventListener('click', (e) => { if (e.target === sh) sh.classList.add('hidden'); }));
 $('setProvider').onchange = () => {
-  // guarda o que já foi digitado no provedor anterior
-  if (pendingProvider) { S.keys[pendingProvider] = $('setKey').value.trim(); }
+  if (pendingProvider) S.keys[pendingProvider] = $('setKey').value.trim();
   fillProviderFields();
 };
 $('btnShowKey').onclick = () => { const k = $('setKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
 $('keyHelp').onclick = (e) => { e.preventDefault(); N.openUrl($('keyHelp').dataset.url); };
 $('setRate').oninput = () => { $('rateVal').textContent = $('setRate').value; };
-function boostLabel(v) { v = Number(v); return v <= 0 ? 'normal' : v <= 6 ? `+${v} (um pouco)` : v <= 12 ? `+${v} (alto)` : `+${v} (máximo)`; }
-$('setBoost').oninput = () => {
-  $('boostVal').textContent = boostLabel($('setBoost').value);
-  N.setBoost(Number($('setBoost').value));
+$('setBoost').oninput = () => { $('boostVal').textContent = boostLabel($('setBoost').value); N.setBoost(Number($('setBoost').value)); };
+$('btnTestVoice').onclick = () => {
+  N.ensureAudible();
+  const s = readSettingsForm();
+  const txt = 'Hello! This is my voice. Can you hear me well?';
+  if (s.voiceMode === 'natural' && s.keys.gemini) {
+    N.playerOpen(24000, false, 'tts');
+    playNatural(txt, false, null).catch((e) => toast(e.message || String(e)));
+  } else N.speak(txt, 'en-US', s.rate, s.voice || androidVoice(), { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) });
 };
-$('btnTestVoice').onclick = () => { N.ensureAudible(); N.speak('Hello! This is my voice. Can you hear me well?', 'en-US', Number($('setRate').value), $('setVoice').value, { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) }); };
-document.querySelectorAll('#setCorrect button').forEach((b) => {
-  b.onclick = () => document.querySelectorAll('#setCorrect button').forEach((x) => x.classList.toggle('on', x === b));
+['setLevel', 'setCorrect', 'setMode', 'setVoiceMode', 'setQuality'].forEach((id) => {
+  document.querySelectorAll(`#${id} button`).forEach((b) => {
+    b.onclick = () => document.querySelectorAll(`#${id} button`).forEach((x) => x.classList.toggle('on', x === b));
+  });
 });
 $('btnReload').onclick = () => { N.stopSpeaking(); N.stopListening(); location.reload(); };
 $('btnResetAll').onclick = () => {
@@ -527,31 +1035,17 @@ $('btnResetAll').onclick = () => {
     return;
   }
   b.dataset.armed = '';
-  vocab = []; days = [];
-  store.set('vocab', vocab); store.set('days', days);
+  vocab = []; days = []; mins = {};
+  store.set('vocab', vocab); store.set('days', days); store.set('mins', mins);
   renderHome();
   b.textContent = 'Progresso apagado ✔';
 };
-$('btnRestart').onclick = restartLesson;
-$('repeatBox').onclick = (e) => {
-  if (!st.repeat) return;
-  $('repeatBox').classList.add('played');
-  const w = e.target.closest('#repeatText .w');
-  if (w) { practiceSpeak(w.textContent.replace(/[^\w'’-]/g, ''), { slow: true }); return; }
-  practiceSpeak(st.repeat.text, { highlight: true });
-};
-$('corrBox').onclick = () => { if (st.corr) practiceSpeak(st.corr.correct); };
-$('tutorLine').onclick = (e) => {
-  const seg = e.target.closest('.seg.en');
-  if (seg) practiceSpeak(seg.textContent);
-};
-document.querySelectorAll('#setLevel button').forEach((b) => {
-  b.onclick = () => document.querySelectorAll('#setLevel button').forEach((x) => x.classList.toggle('on', x === b));
-});
 $('btnSave').onclick = () => {
+  const oldQ = S.quality;
   S = readSettingsForm();
   store.set('settings', S);
   N.setBoost(S.boost);
+  if (oldQ !== S.quality) avatar.setQuality(S.quality);
   $('settings').classList.add('hidden');
   renderHome();
   toast('Configurações salvas ✔', 1500);
@@ -563,20 +1057,61 @@ $('btnTest').onclick = async () => {
   try {
     const r = await askLLM({ provider: s.provider, key: s.keys[s.provider], model: s.models[s.provider] || PROVIDERS[s.provider].model },
       systemPrompt({ level: s.level, vocab: [], correct: s.correct }), [], '[Teste de conexão] Diga apenas um oi curto.', null);
-    out.textContent = `✅ Funcionou! A Lia respondeu: "${r.speech.map((p) => p.text).join(' ')}"`;
+    out.textContent = `✅ Funcionou! Resposta: "${r.speech.map((p) => p.text).join(' ')}"`;
   } catch (e) { out.textContent = '❌ ' + (e.message || e); }
 };
 $('vocabList').onclick = (e) => {
   const li = e.target.closest('li[data-i]');
   if (!li) return;
   const w = vocab[Number(li.dataset.i)];
-  if (e.target.classList.contains('say')) {
-    N.speak(w.en, 'en-US', S.rate, S.voice, { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) });
-  } else if (e.target.classList.contains('del')) {
+  if (e.target.classList.contains('say')) sayEnglish(w.en);
+  else if (e.target.classList.contains('del')) {
     vocab.splice(Number(li.dataset.i), 1);
     store.set('vocab', vocab);
     openVocab(); renderHome();
   }
+};
+$('repeatBox').onclick = (e) => {
+  if (!st.repeat) return;
+  $('repeatBox').classList.add('played');
+  const w = e.target.closest('#repeatText .w');
+  if (w) { practiceSpeak(w.textContent.replace(/[^\w'’-]/g, ''), { slow: true }); return; }
+  practiceSpeak(st.repeat.text, { highlight: true });
+};
+$('corrBox').onclick = () => { if (st.corr) practiceSpeak(st.corr.correct); };
+$('tutorLine').onclick = (e) => {
+  const seg = e.target.closest('.seg.en');
+  if (seg) practiceSpeak(seg.textContent.slice(-160));
+};
+$('reportBody').onclick = (e) => {
+  const g = e.target.closest('[data-say]');
+  if (g) sayEnglish(g.dataset.say);
+};
+// revisão
+$('btnRevShow').onclick = () => revealCard(false);
+$('fEn').onclick = () => sayEnglish(rev.list[rev.i].en);
+$('btnRevSpeak').onclick = () => {
+  const w = rev.list[rev.i];
+  if (!w) return;
+  $('fHeard').textContent = '🎤 ouvindo…';
+  N.listen('en-US', {
+    onPartial: (t) => { $('fHeard').textContent = t; },
+    onResult: (alts) => {
+      const ok = alts.some((a) => liveMatch(w.en, a).every(Boolean));
+      $('fHeard').textContent = ok ? `✓ "${alts[0]}"` : `Ouvi: "${alts[0] || '…'}"`;
+      $('fHeard').className = 'f-heard' + (ok ? ' ok' : '');
+      revealCard(ok);
+    },
+    onError: () => { $('fHeard').textContent = 'Não ouvi. Tente de novo ou toque em Mostrar.'; },
+  });
+};
+$('revGrades').onclick = (e) => {
+  const b = e.target.closest('button[data-g]');
+  if (!b) return;
+  srsGrade(rev.list[rev.i], Number(b.dataset.g));
+  store.set('vocab', vocab);
+  rev.i++;
+  showCard();
 };
 
 // botão voltar do Android
@@ -586,20 +1121,23 @@ window.onNativeBack = () => {
   if (st.inCall) { endCall(); return true; }
   return false;
 };
-// app em segundo plano: pausa a fala/escuta
+// app em segundo plano
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && st.inCall) {
-    N.stopListening(); N.stopSpeaking();
-    st.listening = false; setMicUi(false);
-  } else if (!document.hidden && st.inCall && !st.busy && S.handsFree) {
-    setTimeout(startListening, 600);
-  }
+  if (!st.inCall) return;
+  if (document.hidden) {
+    if (st.liveMode) { N.micStop(); N.playerFlush(); }
+    else { N.stopListening(); N.stopSpeaking(); N.recordCancel(); st.listening = false; setMicUi(false); }
+  } else if (st.liveMode) {
+    if (st.micOn) liveMicStart();
+  } else if (!st.busy && S.handsFree) setTimeout(startListening, 600);
 });
 
-// olhar automático quando o aluno fica em silêncio
+// olhar automático (modo clássico)
 setInterval(() => {
-  if (!st.inCall || st.busy || st.speaking || st.practicing || !st.camOn || !S.autoLook) return;
-  if (Date.now() - st.lastActivity > S.autoLook * 1000) {
+  if (!st.inCall || st.liveMode || st.busy || st.speaking || st.practicing || st.listening && st.repeat && N.canRecord || !st.camOn) return;
+  const every = st.scenario.autoLook || S.autoLook;
+  if (!every) return;
+  if (Date.now() - st.lastActivity > every * 1000) {
     st.lastActivity = Date.now();
     ask('idle');
   }

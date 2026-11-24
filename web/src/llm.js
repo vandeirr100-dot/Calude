@@ -35,14 +35,14 @@ const CORRECTION = {
   off: `NO CORRECTION MODE: do not correct the student's grammar; keep "correction" empty and just keep the conversation going naturally (you may model the right form in your own answer).`,
 };
 
-export function systemPrompt({ level, vocab, correct = 'realtime' }) {
+export function systemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '' }) {
   const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(nenhuma ainda)';
-  return `You are Lia, a warm, upbeat and patient English tutor on a live video call with a Brazilian student (native language: Brazilian Portuguese).
+  return `You are ${tutor}, a warm, upbeat and patient English tutor on a live video call with a Brazilian student (native language: Brazilian Portuguese).
 
 YOU CAN SEE THE STUDENT'S WORLD: many turns include a photo taken right now by the student's phone camera (their room, what they are doing, objects in their hands, food, the kitchen, the street...). Your method is to teach English from the student's real day-to-day life: notice what they are doing or what is around them and turn it into tiny, practical lessons — vocabulary for objects, verbs for actions (present continuous: "I'm cooking"), and useful phrases for that exact situation.
 
 STUDENT LEVEL: ${LEVELS[level] || LEVELS.iniciante}
-
+${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}
 CONVERSATION RULES
 - This is a SPOKEN call. Keep every turn short: at most 3 short sentences in total. Be natural, friendly and encouraging. No lists, no emojis, no markdown, no special symbols.
 - Almost every turn, give the student ONE short English sentence to say out loud (field "repeat"), preferably about what they are doing or seeing right now. Example: "I'm washing the dishes."
@@ -66,7 +66,7 @@ export function eventText(kind, data = {}) {
   const noCam = data.hasImage ? '' : '\n(Sem imagem: a câmera está desligada.)';
   switch (kind) {
     case 'start':
-      return `[Chamada iniciada] Cumprimente o aluno de forma calorosa e curta, comente em uma frase o que você vê na câmera e comece uma mini-aula sobre isso.${noCam}`;
+      return `[Chamada iniciada] Cumprimente o aluno de forma calorosa e curta e comece a aula de hoje (veja TODAY'S LESSON, se houver). Se fizer sentido, comente em uma frase o que você vê na câmera.${noCam}`;
     case 'review':
       return `[Chamada iniciada — aula de revisão] Cumprimente rapidamente e revise uma por uma as palavras salvas do aluno, pedindo para ele usar cada palavra numa frase curta.${noCam}`;
     case 'look':
@@ -77,7 +77,8 @@ export function eventText(kind, data = {}) {
       let t = `O aluno falou (reconhecimento de voz em ${data.lang === 'pt-BR' ? 'português' : 'inglês'}): "${data.text}"`;
       if (data.repeat) {
         t += `\nEle estava tentando repetir: "${data.repeat}". Pontuação automática de pronúncia: ${data.score}%.`;
-        if (data.missed && data.missed.length) t += ` Palavras que não foram reconhecidas: ${data.missed.join(', ')}.`;
+        if (data.missed && data.missed.length) t += ` Palavras com problema: ${data.missed.join(', ')}.`;
+        if (data.issue) t += ` Avaliação pelo som do áudio: ${data.issue}.`;
       }
       return t + noCam;
     }
@@ -185,7 +186,8 @@ export async function askLLM(settings, system, history, userText, imageB64) {
     const cand = j.candidates && j.candidates[0];
     const text = cand && cand.content && (cand.content.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
     if (!text) throw new Error('A IA não respondeu (talvez a imagem tenha sido bloqueada). Tente de novo.');
-    return normalizeReply(text);
+    const u = j.usageMetadata || {};
+    return { ...normalizeReply(text), usage: { in: u.promptTokenCount || 0, out: (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0) } };
   }
 
   if (prov === 'anthropic') {
@@ -202,7 +204,8 @@ export async function askLLM(settings, system, history, userText, imageB64) {
     if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
     const j = JSON.parse(res.text);
     const text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-    return normalizeReply(text);
+    const u = j.usage || {};
+    return { ...normalizeReply(text), usage: { in: u.input_tokens || 0, out: u.output_tokens || 0 } };
   }
 
   // openai
@@ -222,7 +225,8 @@ export async function askLLM(settings, system, history, userText, imageB64) {
   }
   if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
   const j = JSON.parse(res.text);
-  return normalizeReply(j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content);
+  const u = j.usage || {};
+  return { ...normalizeReply(j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content), usage: { in: u.prompt_tokens || 0, out: u.completion_tokens || 0 } };
 }
 
 // ---------- pontuação de pronúncia ----------
@@ -285,4 +289,93 @@ export function pronunciationScore(target, alternatives) {
     }
   }
   return best;
+}
+
+// ================= modo ao vivo =================
+export function liveSystemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', due = [] }) {
+  const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(none yet)';
+  const dueTxt = due.length ? due.slice(0, 12).map((w) => `${w.en} (${w.pt})`).join(', ') : '';
+  return `You are ${tutor}, a warm, upbeat and patient English tutor on a LIVE VOICE + VIDEO CALL with a Brazilian student (native language: Brazilian Portuguese). You talk in real time, like a real person on a call.
+
+YOU CAN SEE: you periodically receive images from the student's phone camera (their room, what they are doing, objects, food, the street). Teach English from the student's real day-to-day life: notice what they are doing or what is around them and turn it into tiny, practical lessons (objects, actions in present continuous, useful phrases for that exact situation).
+
+YOU CAN HEAR THE REAL VOICE: judge pronunciation from the SOUND, not only the words. Pay special attention to typical Brazilian difficulties: "th" (think/this said as f/d/t), initial "h" (house said like "rouse"), extra vowel at the end of words (big -> "bigi", Facebook -> "Facebooki"), final -ed and -s, short vs long vowels (ship/sheep, full/fool), "r" sounds, word stress, and the schwa. Explain how to place the tongue/lips briefly in Portuguese when needed.
+
+STUDENT LEVEL: ${LEVELS[level] || LEVELS.iniciante}
+${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}
+${CORRECTION[correct] || CORRECTION.realtime}
+
+SPEAKING STYLE
+- Short turns (1-3 short sentences), natural, friendly, encouraging, with natural pauses. Speak English clearly; for beginners speak English slowly.
+- Almost every turn, give the student ONE short English sentence to say out loud, preferably about what they are doing or seeing right now.
+- Never talk about the student's body, looks or appearance. If the image is unclear, just continue.
+- Vary topics; don't repeat what you already taught.
+- Student's saved words (review some from time to time): ${words}.
+${dueTxt ? `- Words due for review today (review these first, one by one): ${dueTxt}.` : ''}
+
+SCREEN TOOLS — the student also SEES a screen. Use these tools while you speak (never read the tool arguments aloud, never mention the tools):
+- show_phrase: EVERY time you ask the student to repeat/say a sentence.
+- show_correction: EVERY time you correct a mistake.
+- show_pronunciation: right after the student tries to repeat a sentence (score 0-100 judged by the sound, problem words, a short tip in Portuguese).
+- save_words: when you teach new useful words/expressions (max 3 at a time).
+
+Start the call now: greet the student warmly and briefly, say in one sentence what you see on the camera (if anything) and start the first mini-lesson.`;
+}
+
+// ================= voz natural (Gemini TTS) =================
+const TTS_MODELS = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'];
+let ttsModelIdx = 0;
+export async function ttsGemini(key, text, voice, slow = false) {
+  const prompt = slow
+    ? `Say this slowly and very clearly, like an English teacher modeling pronunciation, with a short pause between words: ${text}`
+    : `Say this warmly and naturally, like a friendly teacher on a video call. Portuguese parts in Brazilian Portuguese, English parts with a clear American accent: ${text}`;
+  for (let i = ttsModelIdx; i < TTS_MODELS.length; i++) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODELS[i]}:generateContent`;
+    const res = await httpPost(url, { 'Content-Type': 'application/json', 'x-goog-api-key': key }, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || 'Aoede' } } },
+      },
+    }, 45000);
+    if (res.status === 404 || (res.status === 400 && /model|not found|not supported/i.test(res.text))) { ttsModelIdx = i + 1; continue; }
+    if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
+    const j = JSON.parse(res.text);
+    const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+    const a = parts.find((p) => p.inlineData && p.inlineData.data);
+    if (!a) throw new Error('A voz natural não retornou áudio.');
+    const m = /rate=(\d+)/.exec(a.inlineData.mimeType || '');
+    return { b64: a.inlineData.data, rate: m ? Number(m[1]) : 24000 };
+  }
+  throw new Error('Nenhum modelo de voz natural disponível.');
+}
+
+// ================= pronúncia avaliada pelo som =================
+export async function assessPronunciation(settings, wavB64, target, level) {
+  const model = settings.model || PROVIDERS.gemini.model;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const prompt = `You are an expert English pronunciation coach for Brazilian learners (level: ${level}).
+The audio is a Brazilian student trying to say exactly: "${target}".
+Listen to the ACTUAL SOUNDS (not just whether words are recognizable). Check: th, initial h, extra final vowels, -ed/-s endings, vowel length, r, word stress, missing or extra words.
+Reply ONLY with JSON:
+{"heard":"what the student actually said","score":0,"words":[{"w":"each word of the target, in order","ok":true}],"issue_pt":"the main problem in Portuguese (or empty)","tip_pt":"one short practical tip in Portuguese on how to make the sound (or a short praise)"}
+Score: 90-100 native-like/clear, 75-89 good with small issues, 50-74 understandable with clear problems, below 50 hard to understand or wrong sentence.`;
+  const res = await httpPost(url, { 'Content-Type': 'application/json', 'x-goog-api-key': settings.key }, {
+    contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'audio/wav', data: wavB64 } }, { text: prompt }] }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 700, responseMimeType: 'application/json' },
+  });
+  if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
+  const j = JSON.parse(res.text);
+  const cand = j.candidates && j.candidates[0];
+  const text = cand && cand.content && (cand.content.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
+  const r = tryParse(text) || {};
+  const u = j.usageMetadata || {};
+  return {
+    heard: String(r.heard || ''),
+    score: Math.max(0, Math.min(100, Math.round(Number(r.score) || 0))),
+    words: Array.isArray(r.words) ? r.words.map((w) => ({ w: String(w.w || ''), ok: !!w.ok })) : [],
+    issue: String(r.issue_pt || ''),
+    tip: String(r.tip_pt || ''),
+    usage: { in: u.promptTokenCount || 0, out: (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0) },
+  };
 }

@@ -2,11 +2,40 @@
 // Cabeça, olhos, pálpebras, sobrancelhas, boca com sincronia labial, cabelo e roupa.
 import * as THREE from 'three';
 
-const SKIN = 0xf4c9a8;
-const SKIN_DARK = 0xe9b292;
-const HAIR = 0x6a3220;
-const SWEATER = 0x2f8a8f;
-const SWEATER_DARK = 0x256f73;
+// ---------- professores (perfis visuais) ----------
+export const PROFILES = {
+  lia: {
+    id: 'lia', name: 'Lia', gender: 'f',
+    skin: 0xf4c9a8, skinDark: 0xe9b292, sheen: 0xff9c88,
+    hair: '#7a3a24', hairStyle: 'bob',
+    top: 0x2f8a8f, topDark: 0x256f73, topSheen: 0x7fd6d0,
+    iris: ['#3b2210', '#7a4a1c', '#b9792f', '#8a5222', '#2a160a'],
+    lashes: true, blush: 0.42, freckles: true, brow: '#4b2415', browThick: 15,
+    lip: ['#c4626a', '#cf6c73', '#9a3f47'], jaw: 0.3,
+    necklace: true, starClip: true, earrings: false, glasses: false,
+  },
+  maya: {
+    id: 'maya', name: 'Maya', gender: 'f',
+    skin: 0x9a6342, skinDark: 0x8a5638, sheen: 0xd08a6a,
+    hair: '#2b1a12', hairStyle: 'curly',
+    top: 0xe0a030, topDark: 0xc4861c, topSheen: 0xffe0a0,
+    iris: ['#1e1009', '#3a200f', '#5e3418', '#40220e', '#140a05'],
+    lashes: true, blush: 0.22, freckles: false, brow: '#1e120c', browThick: 16,
+    lip: ['#8e4048', '#9c4a52', '#6e2c33'], jaw: 0.28,
+    necklace: false, starClip: false, earrings: true, glasses: false,
+  },
+  ben: {
+    id: 'ben', name: 'Ben', gender: 'm',
+    skin: 0xeab48c, skinDark: 0xdba27a, sheen: 0xff9c80,
+    hair: '#3a2618', hairStyle: 'short',
+    top: 0x2f4f86, topDark: 0x243e6b, topSheen: 0x9ab8ff,
+    iris: ['#14222e', '#2d4a5e', '#4f7a8e', '#2f5064', '#0e1820'],
+    lashes: false, blush: 0.14, freckles: false, brow: '#2f1d12', browThick: 21,
+    lip: ['#b3646a', '#bd6e72', '#8f474d'], jaw: 0.17,
+    necklace: false, starClip: false, earrings: false, glasses: true,
+  },
+};
+let P = PROFILES.lia;
 
 // ---------- utilidades de forma ----------
 const HEAD_SCALE = new THREE.Vector3(0.95, 1.0, 0.95);
@@ -16,7 +45,7 @@ function deformHead(v) {
   const y = v.y;
   if (y < 0) {
     const t = Math.min(1, -y);
-    v.x *= 1 - 0.3 * t * t;           // maxilar afinando
+    v.x *= 1 - P.jaw * t * t;         // maxilar afinando
     v.z *= 1 - 0.06 * t * t;
     v.y *= 1 - 0.04 * t;
   } else {
@@ -82,16 +111,22 @@ function seeded(seed) {
   return () => ((s = (s * 16807) % 2147483647) / 2147483647);
 }
 
-function hairTexture() {
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.max(0, Math.min(255, Math.round(f > 0 ? v + (255 - v) * f : v * (1 + f))));
+  return `rgb(${ch(n >> 16)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+}
+function hairTexture(base) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 256;
   const g = c.getContext('2d');
-  g.fillStyle = '#7a3a24'; g.fillRect(0, 0, 256, 256);
+  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
+  const hi = shade(base, 0.35).replace('rgb', 'rgba').replace(')', ','), lo = shade(base, -0.55).replace('rgb', 'rgba').replace(')', ',');
   const r = seeded(7);
   for (let i = 0; i < 420; i++) {
     const x = r() * 256, w = 0.6 + r() * 1.8;
     const l = r();
-    g.strokeStyle = l > 0.6 ? `rgba(190,110,70,${0.25 + r() * 0.3})` : `rgba(40,15,8,${0.25 + r() * 0.35})`;
+    g.strokeStyle = l > 0.6 ? `${hi}${0.25 + r() * 0.3})` : `${lo}${0.25 + r() * 0.35})`;
     g.lineWidth = w;
     g.beginPath(); g.moveTo(x, 0);
     g.bezierCurveTo(x + (r() - 0.5) * 14, 85, x + (r() - 0.5) * 14, 170, x + (r() - 0.5) * 10, 256);
@@ -103,7 +138,7 @@ function hairTexture() {
   return t;
 }
 
-function eyeTexture() {
+function eyeTexture(iris) {
   const W = 1024, H = 512;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -115,11 +150,11 @@ function eyeTexture() {
   const cx = 256, cy = 256, R = 86, P = 34;
   // íris (âmbar/avelã)
   const ig = g.createRadialGradient(cx, cy, P * 0.8, cx, cy, R);
-  ig.addColorStop(0, '#3b2210');
-  ig.addColorStop(0.18, '#7a4a1c');
-  ig.addColorStop(0.55, '#b9792f');
-  ig.addColorStop(0.85, '#8a5222');
-  ig.addColorStop(1, '#2a160a');
+  ig.addColorStop(0, iris[0]);
+  ig.addColorStop(0.18, iris[1]);
+  ig.addColorStop(0.55, iris[2]);
+  ig.addColorStop(0.85, iris[3]);
+  ig.addColorStop(1, iris[4]);
   g.fillStyle = ig;
   g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
   // estrias
@@ -182,10 +217,12 @@ function letterViseme(ch, next) {
 }
 
 export class Avatar {
-  constructor(canvas) {
+  constructor(canvas, profile = 'lia', quality = 'high') {
     this.canvas = canvas;
+    P = PROFILES[profile] || PROFILES.lia;
+    this.quality = quality;
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    renderer.setPixelRatio(quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -214,6 +251,7 @@ export class Avatar {
     this.speakingUntil = 0;
     this.micLevel = 0;
     this.nod = 0; this.nodVel = 0;
+    this.talkLevel = 0; this.talkAt = 0; this.lastFrame = 0;
     this.lastMouthKey = '';
     this.lastBrowKey = '';
     this.clock = new THREE.Timer();
@@ -245,7 +283,7 @@ export class Avatar {
     this.root = root;
 
     const skinMat = new THREE.MeshPhysicalMaterial({
-      color: SKIN, roughness: 0.55, sheen: 0.7, sheenColor: new THREE.Color(0xff9c88), sheenRoughness: 0.45,
+      color: P.skin, roughness: 0.55, sheen: 0.7, sheenColor: new THREE.Color(P.sheen), sheenRoughness: 0.45,
     });
     this.skinMat = skinMat;
 
@@ -253,11 +291,11 @@ export class Avatar {
     const body = new THREE.Group();
     root.add(body);
     this.body = body;
-    const sweaterMat = new THREE.MeshPhysicalMaterial({ color: SWEATER, roughness: 0.85, sheen: 1, sheenColor: new THREE.Color(0x7fd6d0), sheenRoughness: 0.8 });
+    const sweaterMat = new THREE.MeshPhysicalMaterial({ color: P.top, roughness: 0.85, sheen: 1, sheenColor: new THREE.Color(P.topSheen), sheenRoughness: 0.8 });
     // tronco com perfil de ombros (lathe)
     const prof = [];
-    const P = [[0.0, 0.05], [0.4, 0.05], [0.72, -0.04], [1.08, -0.16], [1.34, -0.38], [1.45, -0.72], [1.47, -1.2], [1.47, -2.8]];
-    for (const [r, y] of P) prof.push(new THREE.Vector2(r, y));
+    const LP = [[0.0, 0.05], [0.4, 0.05], [0.72, -0.04], [1.08, -0.16], [1.34, -0.38], [1.45, -0.72], [1.47, -1.2], [1.47, -2.8]];
+    for (const [r, y] of LP) prof.push(new THREE.Vector2(r, y));
     const torsoGeo = new THREE.LatheGeometry(new THREE.SplineCurve(prof).getPoints(40), 64);
     const torso = new THREE.Mesh(torsoGeo, sweaterMat);
     torso.scale.set(1, 1, 0.62);
@@ -267,21 +305,34 @@ export class Avatar {
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 1.0, 32), skinMat);
     neck.position.set(0, -0.85, -0.12);
     body.add(neck);
-    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.085, 16, 48), new THREE.MeshPhysicalMaterial({ color: SWEATER_DARK, roughness: 0.9, sheen: 1, sheenColor: new THREE.Color(0x7fd6d0) }));
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.085, 16, 48), new THREE.MeshPhysicalMaterial({ color: P.topDark, roughness: 0.9, sheen: 1, sheenColor: new THREE.Color(P.topSheen) }));
     collar.scale.set(1, 0.85, 1);
     collar.rotation.x = Math.PI / 2;
     collar.position.set(0, -1.2, -0.12);
     body.add(collar);
     // colar dourado com pingente de estrela
     const gold = new THREE.MeshStandardMaterial({ color: 0xf2c14e, metalness: 0.9, roughness: 0.25 });
-    const chain = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.012, 8, 64, Math.PI * 0.62), gold);
-    chain.rotation.set(Math.PI / 2 - 0.55, 0, Math.PI + Math.PI * 0.19);
-    chain.position.set(0, -1.3, 0.02);
-    body.add(chain);
-    const star = new THREE.Mesh(this._starGeo(0.07, 0.03, 0.025), gold);
-    star.position.set(0, -1.65, 0.3);
-    star.rotation.x = -0.35;
-    body.add(star);
+    this.gold = gold;
+    if (P.necklace) {
+      const chain = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.012, 8, 64, Math.PI * 0.62), gold);
+      chain.rotation.set(Math.PI / 2 - 0.55, 0, Math.PI + Math.PI * 0.19);
+      chain.position.set(0, -1.3, 0.02);
+      body.add(chain);
+      const star = new THREE.Mesh(this._starGeo(0.07, 0.03, 0.025), gold);
+      star.position.set(0, -1.65, 0.3);
+      star.rotation.x = -0.35;
+      body.add(star);
+    }
+    if (P.gender === 'm') {
+      // gola de camisa
+      for (const s of [-1, 1]) {
+        const flap = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 3), new THREE.MeshLambertMaterial({ color: 0xdfe6f0 }));
+        flap.scale.set(1, 1, 0.25);
+        flap.rotation.set(0.35, 0, s * 2.5);
+        flap.position.set(s * 0.26, -1.36, 0.28);
+        body.add(flap);
+      }
+    }
 
     // cabeça
     const head = new THREE.Group();
@@ -300,6 +351,12 @@ export class Avatar {
       ear.position.copy(p);
       ear.rotation.y = s * 0.3;
       head.add(ear);
+      if (P.earrings) {
+        const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.014, 8, 32), this.gold);
+        hoop.position.copy(p).add(new THREE.Vector3(s * 0.03, -0.2, 0.02));
+        hoop.rotation.y = s * 1.2;
+        head.add(hoop);
+      }
     }
 
     // retalhos de rosto: base (blush/sardas), sobrancelhas, boca
@@ -311,7 +368,7 @@ export class Avatar {
     head.add(this.mouthPatch.mesh);
 
     // nariz
-    const noseMat = new THREE.MeshPhysicalMaterial({ color: SKIN_DARK, roughness: 0.5, sheen: 0.7, sheenColor: new THREE.Color(0xff9c88) });
+    const noseMat = new THREE.MeshPhysicalMaterial({ color: P.skinDark, roughness: 0.5, sheen: 0.7, sheenColor: new THREE.Color(P.sheen) });
     const np = surf(0, -0.19, 1.0);
     const nose = new THREE.Mesh(new THREE.SphereGeometry(0.085, 32, 24), noseMat);
     nose.scale.set(1.0, 0.78, 0.85);
@@ -324,9 +381,9 @@ export class Avatar {
 
     // olhos
     this.eyes = [];
-    const eyeTex = eyeTexture();
+    const eyeTex = eyeTexture(P.iris);
     const eyeMat = new THREE.MeshStandardMaterial({ map: eyeTex, roughness: 0.12, metalness: 0 });
-    const lidMat = new THREE.MeshPhysicalMaterial({ color: SKIN, roughness: 0.55, side: THREE.DoubleSide, sheen: 0.7, sheenColor: new THREE.Color(0xff9c88) });
+    const lidMat = new THREE.MeshPhysicalMaterial({ color: P.skin, roughness: 0.55, side: THREE.DoubleSide, sheen: 0.7, sheenColor: new THREE.Color(P.sheen) });
     const lashMat = new THREE.MeshStandardMaterial({ color: 0x1a0d08, roughness: 0.6 });
     const EYE_R = 0.2;
     for (const s of [-1, 1]) {
@@ -345,12 +402,12 @@ export class Avatar {
       g.add(upper);
       const ul = new THREE.Mesh(new THREE.SphereGeometry(EYE_R * 1.03, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2 + 0.05), lidMat);
       upper.add(ul);
-      const liner = new THREE.Mesh(new THREE.TorusGeometry(EYE_R * 1.035, 0.022, 8, 48, Math.PI), lashMat);
+      const liner = new THREE.Mesh(new THREE.TorusGeometry(EYE_R * 1.035, P.lashes ? 0.022 : 0.012, 8, 48, Math.PI), lashMat);
       liner.rotation.x = Math.PI / 2;
       liner.position.y = -0.008;
       upper.add(liner);
       // cílios no canto externo
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < (P.lashes ? 3 : 0); k++) {
         const lash = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.07, 6), lashMat);
         const a = (s > 0 ? 0.12 : Math.PI - 0.12) + (s > 0 ? 1 : -1) * k * 0.2;
         lash.position.set(Math.cos(a) * EYE_R * 1.04, -0.005, Math.sin(a) * EYE_R * 1.06);
@@ -370,8 +427,32 @@ export class Avatar {
       this.eyes.push({ g, gazeG, upper, lower, side: s });
     }
 
+    // óculos
+    if (P.glasses) {
+      const gm = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.35, metalness: 0.4 });
+      for (const e of this.eyes) {
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.022, 10, 48), gm);
+        rim.scale.set(1.12, 0.86, 1);
+        rim.position.copy(e.g.position).add(new THREE.Vector3(0, 0.0, 0.2));
+        head.add(rim);
+        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.235, 32), new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, roughness: 0.05, metalness: 0 }));
+        lens.scale.set(1.12, 0.86, 1);
+        lens.position.copy(rim.position);
+        head.add(lens);
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.85, 8), gm);
+        arm.rotation.x = Math.PI / 2;
+        arm.position.set(e.side * 0.92, e.g.position.y + 0.04, rim.position.z - 0.42);
+        head.add(arm);
+      }
+      const bridgeG = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.016, 8, 16, Math.PI), gm);
+      bridgeG.position.set(0, this.eyes[0].g.position.y + 0.04, this.eyes[0].g.position.z + 0.21);
+      head.add(bridgeG);
+    }
+
     // cabelo
-    this._buildHair(head);
+    if (P.hairStyle === 'curly') this._buildCurly(head);
+    else if (P.hairStyle === 'short') this._buildShort(head);
+    else this._buildHair(head);
   }
 
   _starGeo(r1, r2, depth) {
@@ -403,11 +484,99 @@ export class Avatar {
     return new THREE.Mesh(geo, mat);
   }
 
+  _hairMat() {
+    const tex = hairTexture(P.hair);
+    tex.repeat.set(6, 1);
+    return new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, map: tex, roughness: 0.42, sheen: 1, sheenColor: new THREE.Color(shade(P.hair, 0.4)), sheenRoughness: 0.35,
+      clearcoat: 0.25, clearcoatRoughness: 0.5, side: THREE.DoubleSide,
+    });
+  }
+
+  // cabelo cacheado volumoso (Maya)
+  _buildCurly(head) {
+    const mat = this._hairMat();
+    mat.map.repeat.set(1, 1);
+    mat.roughness = 0.75; mat.clearcoat = 0;
+    const hair = new THREE.Group();
+    head.add(hair);
+    this.hair = hair;
+    const cap = new THREE.SphereGeometry(1, 64, 48, 0, Math.PI * 2, 0, 1.75);
+    cap.applyMatrix4(new THREE.Matrix4().makeRotationX(-0.72));
+    deformGeometry(cap, 1.05);
+    hair.add(new THREE.Mesh(cap, mat));
+    const r = seeded(21);
+    const curlGeo = new THREE.IcosahedronGeometry(1, 2);
+    const pts = [];
+    for (let i = 0; i < 2000 && pts.length < 240; i++) {
+      // pontos na esfera
+      const u = r() * 2 - 1, a = r() * Math.PI * 2;
+      const q = Math.sqrt(1 - u * u);
+      const d = new THREE.Vector3(q * Math.cos(a), u, q * Math.sin(a));
+      if (d.y < -0.45) continue;
+      // deixa o rosto livre
+      const face = d.z > 0.25 && d.y < 0.6 && Math.abs(d.x) < 0.78;
+      if (face) continue;
+      if (d.z > 0 && d.y < 0.1 && Math.abs(d.x) < 0.9) continue;
+      pts.push(d);
+    }
+    const inst = new THREE.InstancedMesh(curlGeo, mat, pts.length);
+    const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), sc = new THREE.Vector3();
+    pts.forEach((d, i) => {
+      const out = 1.12 + r() * 0.16 + Math.max(0, d.y) * 0.18;
+      const pos = deformHead(d.clone().multiplyScalar(out));
+      const k = 0.15 + r() * 0.08;
+      sc.set(k, k, k);
+      q4.setFromEuler(new THREE.Euler(r() * 3, r() * 3, r() * 3));
+      m4.compose(pos, q4, sc);
+      inst.setMatrixAt(i, m4);
+    });
+    hair.add(inst);
+    // linha de cachinhos na testa
+    const front = new THREE.InstancedMesh(curlGeo, mat, 13);
+    for (let i = 0; i < 13; i++) {
+      const x = -0.72 + i * 0.12;
+      const y = 0.6 - Math.abs(x) * 0.12 + (r() - 0.5) * 0.04;
+      const pos = surf(x, y, 1.08);
+      const k = 0.12 + r() * 0.04;
+      sc.set(k, k, k);
+      q4.setFromEuler(new THREE.Euler(r() * 3, r() * 3, r() * 3));
+      m4.compose(pos, q4, sc);
+      front.setMatrixAt(i, m4);
+    }
+    hair.add(front);
+  }
+
+  // cabelo curto masculino (Ben)
+  _buildShort(head) {
+    const mat = this._hairMat();
+    const hair = new THREE.Group();
+    head.add(hair);
+    this.hair = hair;
+    const cap = new THREE.SphereGeometry(1, 96, 64, 0, Math.PI * 2, 0, 1.55);
+    cap.applyMatrix4(new THREE.Matrix4().makeRotationX(-0.72));
+    deformGeometry(cap, 1.045);
+    hair.add(new THREE.Mesh(cap, mat));
+    // topete
+    const locks = [[-0.35, 0.86, 0.5, 0.42], [-0.08, 0.9, 0.35, 0.46], [0.2, 0.88, 0.2, 0.42], [0.45, 0.8, 0.05, 0.36]];
+    for (const [x, y, ang, len] of locks) {
+      const p = surf(x, y, 1.07);
+      const holder = new THREE.Object3D();
+      holder.position.copy(p);
+      holder.lookAt(p.clone().multiplyScalar(2));
+      holder.rotateZ(ang);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), mat);
+      m.scale.set(0.2, len, 0.09);
+      holder.add(m);
+      hair.add(holder);
+    }
+  }
+
   _buildHair(head) {
-    const tex = hairTexture();
+    const tex = hairTexture(P.hair);
     tex.repeat.set(6, 1);
     const hairMat = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, map: tex, roughness: 0.42, sheen: 1, sheenColor: new THREE.Color(0xd08050), sheenRoughness: 0.35,
+      color: 0xffffff, map: tex, roughness: 0.42, sheen: 1, sheenColor: new THREE.Color(shade(P.hair, 0.4)), sheenRoughness: 0.35,
       clearcoat: 0.25, clearcoatRoughness: 0.5, side: THREE.DoubleSide,
     });
     const hair = new THREE.Group();
@@ -452,6 +621,7 @@ export class Avatar {
     }));
 
     // presilha de estrela amarela
+    if (!P.starClip) return;
     const clipMat = new THREE.MeshPhysicalMaterial({ color: 0xffc83d, roughness: 0.3, clearcoat: 1 });
     const clip = new THREE.Mesh(this._starGeo(0.09, 0.04, 0.04), clipMat);
     const cp = surf(0.6, 0.62, 1.13);
@@ -470,14 +640,14 @@ export class Avatar {
       const [x, y] = toPx(s * 0.48, -0.2);
       const r = unit(s * 0.48, -0.2, 0.36);
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, 'rgba(255,110,105,0.42)');
+      g.addColorStop(0, `rgba(255,110,105,${P.blush})`);
       g.addColorStop(1, 'rgba(255,110,105,0)');
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.75, 0, 0, Math.PI * 2); ctx.fill();
     }
     // sardas
     const r = seeded(11);
-    for (let i = 0; i < 34; i++) {
+    for (let i = 0; i < (P.freckles ? 34 : 0); i++) {
       const s = i % 2 ? 1 : -1;
       const fx = s * (0.12 + r() * 0.42), fy = -0.08 - r() * 0.2;
       const [x, y] = toPx(fx, fy);
@@ -511,7 +681,7 @@ export class Avatar {
         [s * 0.46, 0.345 + dy * 0.8],
       ].map(([x, y]) => toPx(x, y));
       // forma afinada (grossa no começo, fina no fim)
-      const thick0 = 15, thick1 = 5;
+      const thick0 = P.browThick, thick1 = P.gender === 'm' ? 9 : 5;
       const top = [], bot = [];
       const N = 16;
       for (let i = 0; i <= N; i++) {
@@ -521,7 +691,7 @@ export class Avatar {
         const th = lerp(thick0, thick1, t) * (1 - 0.3 * t * t);
         top.push([x, y - th / 2]); bot.push([x, y + th / 2]);
       }
-      ctx.fillStyle = '#4b2415';
+      ctx.fillStyle = P.brow;
       ctx.beginPath();
       ctx.moveTo(top[0][0], top[0][1]);
       for (const p of top) ctx.lineTo(p[0], p[1]);
@@ -550,7 +720,7 @@ export class Avatar {
     if (m.open < 0.05) {
       // boca fechada: linha com sorriso + lábio inferior
       const dip = u * 0.03 * m.smile + 2;
-      ctx.strokeStyle = '#9a3f47'; ctx.lineWidth = 4.5; ctx.lineCap = 'round';
+      ctx.strokeStyle = P.lip[2]; ctx.lineWidth = 4.5; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(L[0], L[1]);
       ctx.bezierCurveTo(cx - hw * 0.4, cy + dip, cx + hw * 0.4, cy + dip, R[0], R[1]);
       ctx.stroke();
@@ -601,12 +771,12 @@ export class Avatar {
     ctx.restore();
     // lábios
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.strokeStyle = '#c4626a'; ctx.lineWidth = 6;
+    ctx.strokeStyle = P.lip[0]; ctx.lineWidth = P.gender === 'm' ? 4 : 6;
     ctx.beginPath();
     ctx.moveTo(L[0], L[1]);
     ctx.bezierCurveTo(cx - hw * 0.55 + roundPull * 0.3, upY - 3, cx + hw * 0.55 - roundPull * 0.3, upY - 3, R[0], R[1]);
     ctx.stroke();
-    ctx.strokeStyle = '#cf6c73'; ctx.lineWidth = 9;
+    ctx.strokeStyle = P.lip[1]; ctx.lineWidth = P.gender === 'm' ? 6 : 9;
     ctx.beginPath();
     ctx.moveTo(L[0] + 3, L[1] + 1);
     ctx.bezierCurveTo(cx - hw * 0.8 + roundPull, loY + 4, cx + hw * 0.8 - roundPull, loY + 4, R[0] - 3, R[1] + 1);
@@ -620,6 +790,29 @@ export class Avatar {
   }
 
   // ---------- API pública ----------
+  setProfile(id) {
+    if (!PROFILES[id] || (P === PROFILES[id] && this.root)) return;
+    P = PROFILES[id];
+    if (this.root) {
+      this.scene.remove(this.root);
+      this.root.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+        for (const m of ms) { if (m.map) m.map.dispose(); m.dispose(); }
+      });
+    }
+    this._build();
+    this.lastMouthKey = ''; this.lastBrowKey = '';
+    this._drawFace();
+  }
+  get profile() { return P; }
+  setQuality(q) {
+    this.quality = q;
+    this.renderer.setPixelRatio(q === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
+    this.resize();
+  }
+  // nível do áudio que está tocando (0..1) — boca acompanha a voz natural
+  setTalkLevel(v) { this.talkLevel = v; this.talkAt = performance.now(); if (v > 0.03) this.speakingUntil = this.talkAt + 220; }
   setMode(mode) { this.mode = mode; }
   setMood(mood) { this.mood = mood || 'neutral'; this.moodUntil = performance.now() + 4000; }
   setMicLevel(v) { this.micLevel = clamp(v, 0, 1); }
@@ -656,8 +849,10 @@ export class Avatar {
     this.camera.updateProjectionMatrix();
   }
 
-  _loop() {
+  _loop(ts) {
     requestAnimationFrame(this._loop);
+    if (this.quality === 'low' && ts - this.lastFrame < 31) return;
+    this.lastFrame = ts;
     this.clock.update();
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.getElapsed();
@@ -689,6 +884,15 @@ export class Avatar {
       const p = clamp((now - start) / dur, 0, 0.999);
       const v = seq[Math.floor(p * seq.length)];
       tgt = { open: v.open * (0.85 + 0.15 * Math.sin(t * 20)), wide: v.wide, round: v.round, smile: baseSmile * 0.55 };
+    } else if (now - this.talkAt < 200) {
+      // voz natural: abre a boca conforme o volume, variando o formato
+      const lv = clamp(this.talkLevel * 1.35, 0, 1);
+      tgt = {
+        open: lv < 0.06 ? 0 : 0.15 + lv * 0.8,
+        wide: 0.35 * Math.sin(t * 5.3) + 0.15,
+        round: Math.max(0, 0.6 * Math.sin(t * 3.1 + 1)) * (lv > 0.3 ? 1 : 0.4),
+        smile: baseSmile * 0.55,
+      };
     } else if (speaking && mode === 'speaking' && !this.word) {
       const o = Math.abs(Math.sin(t * 10.5)) * (0.4 + 0.3 * Math.sin(t * 3.1));
       tgt = { open: o, wide: 0.3 * Math.sin(t * 4.7), round: 0.2 * Math.max(0, Math.sin(t * 2.3)), smile: baseSmile * 0.6 };
