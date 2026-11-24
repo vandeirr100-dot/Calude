@@ -416,7 +416,19 @@ public class MainActivity extends Activity {
     }
 
     private Intent recognizerIntent(String lang) {
+        boolean auto = "auto".equals(lang);
+        if (auto) lang = "pt-BR";
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        if (auto) {
+            // Android 14+: detecta automaticamente português ou inglês
+            ArrayList<String> langs = new ArrayList<>();
+            langs.add("pt-BR");
+            langs.add("en-US");
+            i.putExtra("android.speech.extra.ENABLE_LANGUAGE_DETECTION", true);
+            i.putStringArrayListExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", langs);
+            i.putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", "balanced");
+            i.putStringArrayListExtra("android.speech.extra.LANGUAGE_SWITCH_ALLOWED_LANGUAGES", langs);
+        }
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);

@@ -196,3 +196,12 @@ body.has-corr #tutorLine { font-size: 15px; max-height: 5.4em; overflow: hidden;
 #vocabList li .box { font-size: 11px; background: #efe9ff; color: var(--accent); border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
 #liveBadge { display: none; margin-left: 6px; font-size: 11px; font-weight: 800; background: #e5574f; color: #fff; border-radius: 6px; padding: 1px 6px; vertical-align: middle; }
 body.live #liveBadge { display: inline-block; }
+
+.quick { display: flex; gap: 8px; margin-bottom: 10px; }
+.qt { flex: 1; position: relative; text-align: left; padding: 9px 10px 9px 44px; border-radius: 14px; background: #f3ebe4; font-weight: 700; font-size: 13px; line-height: 1.2; color: var(--ink); }
+.qt small { display: block; font-weight: 500; color: #7a6a60; font-size: 11.5px; margin-top: 2px; }
+.qt .sw { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 26px; height: 16px; border-radius: 9px; background: #d9cabd; transition: .2s; }
+.qt .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: .2s; }
+.qt.on { background: #efe9ff; }
+.qt.on .sw { background: var(--accent); }
+.qt.on .sw::after { left: 12px; }

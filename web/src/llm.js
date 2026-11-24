@@ -35,14 +35,20 @@ const CORRECTION = {
   off: `NO CORRECTION MODE: do not correct the student's grammar; keep "correction" empty and just keep the conversation going naturally (you may model the right form in your own answer).`,
 };
 
-export function systemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '' }) {
+export const CURIOUS = `CURIOUS TEACHER: be genuinely curious and proactive, like a friend on a video call. Keep looking at the camera images and ASK the student about what you see and what they are doing ("What are you doing now?", "Is that your coffee?", "Are you cooking something?", "Where are you going later?"). One question at a time, short and simple for their level. When the student is quiet, look again and ask something new about the scene.`;
+export const PT_BRIDGE = `PORTUGUESE ANSWERS ARE WELCOME: the student may answer in Portuguese. When they do, first react naturally to WHAT they said (show you understood), then teach them how to say EXACTLY that in English: say the English sentence slowly and clearly, translate key words if needed, and ask them to repeat it (put that sentence in the phrase to repeat). After they repeat it, praise/correct and continue with a new curious question. Never scold them for using Portuguese.`;
+export function behaviorText({ curious, ptBridge }) {
+  return [curious ? CURIOUS : '', ptBridge ? PT_BRIDGE : ''].filter(Boolean).join('\n');
+}
+
+export function systemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', behavior = '' }) {
   const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(nenhuma ainda)';
   return `You are ${tutor}, a warm, upbeat and patient English tutor on a live video call with a Brazilian student (native language: Brazilian Portuguese).
 
 YOU CAN SEE THE STUDENT'S WORLD: many turns include a photo taken right now by the student's phone camera (their room, what they are doing, objects in their hands, food, the kitchen, the street...). Your method is to teach English from the student's real day-to-day life: notice what they are doing or what is around them and turn it into tiny, practical lessons — vocabulary for objects, verbs for actions (present continuous: "I'm cooking"), and useful phrases for that exact situation.
 
 STUDENT LEVEL: ${LEVELS[level] || LEVELS.iniciante}
-${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}
+${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}${behavior ? `\n${behavior}\n` : ''}
 CONVERSATION RULES
 - This is a SPOKEN call. Keep every turn short: at most 3 short sentences in total. Be natural, friendly and encouraging. No lists, no emojis, no markdown, no special symbols.
 - Almost every turn, give the student ONE short English sentence to say out loud (field "repeat"), preferably about what they are doing or seeing right now. Example: "I'm washing the dishes."
@@ -71,10 +77,13 @@ export function eventText(kind, data = {}) {
       return `[Chamada iniciada — aula de revisão] Cumprimente rapidamente e revise uma por uma as palavras salvas do aluno, pedindo para ele usar cada palavra numa frase curta.${noCam}`;
     case 'look':
       return `[O aluno tocou em "O que estou fazendo?"] Olhe a foto atual e ensine como dizer em inglês o que ele está fazendo ou o que aparece em destaque. Dê uma frase para ele repetir.${noCam}`;
+    case 'curious':
+      return `[O aluno está quieto há um tempo] Olhe a foto atual com curiosidade e pergunte, de forma curta e simpática, o que ele está fazendo ou sobre algo que você vê. Se ele responder em português, você vai ensinar a dizer aquilo em inglês.${noCam}`;
     case 'idle':
       return `[O aluno ficou um tempo em silêncio] Olhe a foto atual e puxe uma conversa curta sobre o que ele está fazendo agora, ou proponha uma frase nova para repetir.${noCam}`;
     case 'user': {
-      let t = `O aluno falou (reconhecimento de voz em ${data.lang === 'pt-BR' ? 'português' : 'inglês'}): "${data.text}"`;
+      let t = `O aluno falou (reconhecimento de voz${data.lang === 'pt-BR' ? ' em português' : data.lang === 'auto' ? ' — pode ser português ou inglês' : ' em inglês'}): "${data.text}"`;
+      if (data.lang !== 'en-US' && data.bridge) t += '\n(Se ele falou em português, ensine a dizer exatamente isso em inglês e peça para repetir.)';
       if (data.repeat) {
         t += `\nEle estava tentando repetir: "${data.repeat}". Pontuação automática de pronúncia: ${data.score}%.`;
         if (data.missed && data.missed.length) t += ` Palavras com problema: ${data.missed.join(', ')}.`;
@@ -292,7 +301,7 @@ export function pronunciationScore(target, alternatives) {
 }
 
 // ================= modo ao vivo =================
-export function liveSystemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', due = [] }) {
+export function liveSystemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', due = [], behavior = '' }) {
   const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(none yet)';
   const dueTxt = due.length ? due.slice(0, 12).map((w) => `${w.en} (${w.pt})`).join(', ') : '';
   return `You are ${tutor}, a warm, upbeat and patient English tutor on a LIVE VOICE + VIDEO CALL with a Brazilian student (native language: Brazilian Portuguese). You talk in real time, like a real person on a call.
@@ -302,7 +311,7 @@ YOU CAN SEE: you periodically receive images from the student's phone camera (th
 YOU CAN HEAR THE REAL VOICE: judge pronunciation from the SOUND, not only the words. Pay special attention to typical Brazilian difficulties: "th" (think/this said as f/d/t), initial "h" (house said like "rouse"), extra vowel at the end of words (big -> "bigi", Facebook -> "Facebooki"), final -ed and -s, short vs long vowels (ship/sheep, full/fool), "r" sounds, word stress, and the schwa. Explain how to place the tongue/lips briefly in Portuguese when needed.
 
 STUDENT LEVEL: ${LEVELS[level] || LEVELS.iniciante}
-${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}
+${scenario ? `\nTODAY'S LESSON: ${scenario}\n` : ''}${behavior ? `\n${behavior}\n` : ''}
 ${CORRECTION[correct] || CORRECTION.realtime}
 
 SPEAKING STYLE

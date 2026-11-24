@@ -2,7 +2,7 @@ import { Avatar, PROFILES } from './avatar.js';
 import * as N from './native.js';
 import {
   PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch,
-  liveSystemPrompt, ttsGemini, assessPronunciation,
+  liveSystemPrompt, ttsGemini, assessPronunciation, behaviorText,
 } from './llm.js';
 import { connectLive, LIVE_TOOLS, LIVE_MODELS } from './live.js';
 import {
@@ -23,7 +23,7 @@ const DEFAULTS = {
   provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
   handsFree: true, camDefault: true, correct: 'realtime', boost: 9,
   mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
-  tutor: 'lia', scenario: 'daily', goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
+  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, curiousEvery: 25, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 const VOICES = { lia: 'Aoede', maya: 'Kore', ben: 'Puck' };
@@ -33,6 +33,9 @@ const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] ||
 const liveAvailable = () => S.mode === 'live' && S.provider === 'gemini' && !!geminiKey();
 const naturalVoice = () => S.voiceMode === 'natural' && !!geminiKey();
 const tutorName = () => PROFILES[S.tutor].name;
+const isCurious = () => !!(S.curious || st.scenario.curious);
+const ptBridge = () => !!(S.ptBridge || st.scenario.ptBridge);
+const behavior = () => behaviorText({ curious: isCurious(), ptBridge: ptBridge() });
 const androidVoice = () => S.voice || (PROFILES[S.tutor].gender === 'm' ? 'auto:male' : 'auto:female');
 
 let vocab = store.get('vocab', []).map(srsInit);
@@ -109,6 +112,8 @@ function renderHome() {
   $('tutorName').textContent = p.name;
   document.querySelectorAll('#tutorPick button').forEach((b) => b.classList.toggle('on', b.dataset.t === S.tutor));
   $('scenList').innerHTML = SCENARIOS.map((s) => `<button data-s="${s.id}" class="${s.id === st.scenario.id ? 'on' : ''}"><b>${s.emoji} ${esc(s.title)}</b><small>${esc(s.desc)}</small></button>`).join('');
+  $('qCurious').classList.toggle('on', !!S.curious);
+  $('qPt').classList.toggle('on', !!S.ptBridge);
   const b = $('wordsBadge');
   b.textContent = due || vocab.length; b.classList.toggle('hidden', !vocab.length);
   scheduleReminder();
@@ -340,11 +345,14 @@ function startListening() {
     });
     return;
   }
-  setStatus(st.lang === 'pt-BR' ? 'ouvindo (português)…' : 'ouvindo…');
-  N.listen(st.lang, {
+  // com "responder em português" ligado e sem frase para repetir, ouve português e inglês
+  const lang = st.lang === 'pt-BR' ? 'pt-BR' : (ptBridge() && !st.repeat ? 'auto' : 'en-US');
+  st.heardLang = lang;
+  setStatus(lang === 'pt-BR' ? 'ouvindo (português)…' : lang === 'auto' ? 'ouvindo (português ou inglês)…' : 'ouvindo…');
+  N.listen(lang, {
     onPartial: (t) => {
       showUser(t);
-      if (st.repeat && st.lang === 'en-US') markRepeat(liveMatch(st.repeat.text, t), false);
+      if (st.repeat && lang === 'en-US') markRepeat(liveMatch(st.repeat.text, t), false);
     },
     onLevel: (v) => {
       $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, v * 0.4)).toFixed(3));
@@ -424,7 +432,7 @@ async function ask(kind, data = {}) {
   try {
     const due = dueWords(vocab).slice(0, 12);
     const scen = st.scenario.prompt + (st.scenario.id === 'review' && due.length ? ` Words due: ${due.map((w) => `${w.en} (${w.pt})`).join(', ')}.` : '');
-    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen }), st.history.slice(-14), text, img);
+    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, behavior: behavior() }), st.history.slice(-14), text, img);
   } catch (e) {
     st.busy = false;
     if (callId !== st.callId) return;
@@ -455,8 +463,8 @@ async function ask(kind, data = {}) {
 
 function onUserSpeech(text, alts) {
   showUser(text);
-  const data = { text, lang: st.lang };
-  if (st.repeat && st.lang === 'en-US') {
+  const data = { text, lang: st.heardLang || st.lang, bridge: ptBridge() };
+  if (st.repeat && data.lang === 'en-US') {
     const res = pronunciationScore(st.repeat.text, alts);
     if (res) {
       st.repeatTries++;
@@ -485,7 +493,7 @@ async function startLive(kind) {
     sess = await connectLive({
       key: geminiKey(),
       voice: VOICES[S.tutor],
-      system: liveSystemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, due }),
+      system: liveSystemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, due, behavior: behavior() }),
       tools: LIVE_TOOLS,
       onAudio: (b64) => {
         if (callId !== st.callId || st.dropAudio) return;
@@ -848,6 +856,9 @@ function openSettings() {
   $('setHandsFree').checked = S.handsFree;
   $('setCamDefault').checked = S.camDefault;
   $('setGoal').value = String(S.goal);
+  $('setCurious').checked = S.curious;
+  $('setPtBridge').checked = S.ptBridge;
+  $('setCuriousEvery').value = String(S.curiousEvery);
   $('setReminder').checked = S.reminder;
   $('setReminderTime').value = S.reminderTime;
   $('setPrice').value = S.price || '';
@@ -897,6 +908,9 @@ function readSettingsForm() {
   s.handsFree = $('setHandsFree').checked;
   s.camDefault = $('setCamDefault').checked;
   s.goal = Number($('setGoal').value) || 60;
+  s.curious = $('setCurious').checked;
+  s.ptBridge = $('setPtBridge').checked;
+  s.curiousEvery = Number($('setCuriousEvery').value) || 25;
   s.reminder = $('setReminder').checked;
   s.reminderTime = $('setReminderTime').value || '19:00';
   s.price = $('setPrice').value.trim();
@@ -944,6 +958,8 @@ $('scenList').onclick = (e) => {
   S.scenario = st.scenario.id; store.set('settings', S);
   renderHome();
 };
+$('qCurious').onclick = () => { S.curious = !S.curious; store.set('settings', S); renderHome(); toast(S.curious ? 'Professora curiosa: ela vai perguntar o que você está fazendo 🧐' : 'Professora curiosa desligada', 2200); };
+$('qPt').onclick = () => { S.ptBridge = !S.ptBridge; store.set('settings', S); renderHome(); toast(S.ptBridge ? 'Pode responder em português: ela te ensina a dizer em inglês 🇧🇷➜🇺🇸' : 'Respostas só em inglês', 2400); };
 $('tutorPick').onclick = (e) => {
   const b = e.target.closest('button[data-t]');
   if (!b || b.dataset.t === S.tutor) return;
@@ -1135,11 +1151,22 @@ document.addEventListener('visibilitychange', () => {
 // olhar automático (modo clássico)
 setInterval(() => {
   if (!st.inCall || st.liveMode || st.busy || st.speaking || st.practicing || st.listening && st.repeat && N.canRecord || !st.camOn) return;
-  const every = st.scenario.autoLook || S.autoLook;
+  const every = st.scenario.autoLook || (isCurious() ? S.curiousEvery : S.autoLook);
   if (!every) return;
   if (Date.now() - st.lastActivity > every * 1000) {
     st.lastActivity = Date.now();
-    ask('idle');
+    ask(isCurious() ? 'curious' : 'idle');
+  }
+}, 1000);
+
+// modo ao vivo: professora curiosa puxa assunto quando você fica quieto
+setInterval(() => {
+  if (!st.inCall || !st.liveMode || !st.live || st.speaking || st.practicing || st.turnOpen || !isCurious()) return;
+  if (Date.now() - st.lastActivity > S.curiousEvery * 1000) {
+    st.lastActivity = Date.now();
+    const f = st.camOn ? captureFrame(512, 0.6) : null;
+    if (f) { st.live.sendImage(f); st.lastSig = sceneSignature($('cam')); st.lastSigAt = Date.now(); }
+    st.live.sendText(eventText('curious', { hasImage: !!f }));
   }
 }, 1000);
 

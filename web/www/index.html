@@ -93,6 +93,10 @@
     <h1 id="homeTitle">Oi! Eu sou a Lia</h1>
     <div class="stats"><span id="streak">🔥 0 dias</span><span id="wordCount">📚 0 palavras</span><span id="levelChip">Iniciante</span></div>
     <div class="goal"><div class="goal-top"><b>Meta da semana</b><span id="goalTxt">0 de 60 min</span></div><div class="bar"><i id="goalBar"></i></div></div>
+    <div class="quick">
+      <button id="qCurious" class="qt"><span class="sw"></span>🧐 Professora curiosa<small>pergunta o que você está fazendo</small></button>
+      <button id="qPt" class="qt"><span class="sw"></span>🇧🇷➜🇺🇸 Responder em português<small>ela ensina a dizer em inglês</small></button>
+    </div>
     <label class="mini-lbl">Escolha a aula</label>
     <div class="scen" id="scenList"></div>
     <button id="btnStart" class="big-btn">
@@ -136,6 +140,17 @@
     <label class="check"><input id="setDuplex" type="checkbox"> Poder interromper a professora falando (usa cancelamento de eco do celular; o som pode ficar um pouco mais baixo)</label>
     <label>Modelo ao vivo</label>
     <input id="setLiveModel" type="text" spellcheck="false">
+
+    <label>Jeito da professora</label>
+    <label class="check"><input id="setCurious" type="checkbox"> Curiosa: olha a câmera e pergunta o que você está fazendo (puxa assunto quando você fica quieto)</label>
+    <label class="check"><input id="setPtBridge" type="checkbox"> Posso responder em português: ela entende e me ensina a dizer aquilo em inglês</label>
+    <label>Quando você ficar quieto, ela pergunta depois de</label>
+    <select id="setCuriousEvery">
+      <option value="15">15 segundos</option>
+      <option value="25">25 segundos</option>
+      <option value="45">45 segundos</option>
+      <option value="90">1 min 30</option>
+    </select>
 
     <label>Correção dos seus erros</label>
     <div class="seg" id="setCorrect">

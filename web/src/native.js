@@ -132,7 +132,7 @@ export function listen(lang, handlers) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { setTimeout(() => window.__nativeStt('error', 'unavailable'), 50); return; }
   webRec = new SR();
-  webRec.lang = lang; webRec.interimResults = true; webRec.maxAlternatives = 3;
+  webRec.lang = lang === 'auto' ? 'pt-BR' : lang; webRec.interimResults = true; webRec.maxAlternatives = 3;
   let done = false;
   webRec.onstart = () => window.__nativeStt('ready');
   webRec.onresult = (e) => {

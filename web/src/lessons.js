@@ -3,6 +3,8 @@
 export const SCENARIOS = [
   { id: 'daily', emoji: '📷', title: 'Meu dia a dia', desc: 'Ela vê o que você faz e ensina', cam: 'user',
     prompt: 'DAY-TO-DAY: teach from what the student is doing right now on the camera (actions, objects, routine). Make it feel like a friendly call.' },
+  { id: 'curious', emoji: '🧐', title: 'Ela pergunta, eu respondo', desc: 'Pergunta o que você faz; responda até em português', cam: 'user', curious: true, ptBridge: true,
+    prompt: 'CURIOUS CONVERSATION: you lead the conversation by asking the student about what they are doing and what you see on the camera. The student can answer in Portuguese or English; whenever they answer in Portuguese, teach them how to say it in English and have them repeat it.' },
   { id: 'explore', emoji: '🔎', title: 'Explorar a casa', desc: 'Aponte a câmera para objetos', cam: 'environment', autoLook: 20,
     prompt: 'EXPLORE MODE: the student points the BACK camera at objects around the house. Each time you see a new main object, say its English name slowly, its Portuguese translation, and one short useful sentence with it for the student to repeat. Then ask them to show you another object. Keep a fast, playful rhythm, like a game.' },
   { id: 'restaurant', emoji: '🍽️', title: 'Restaurante', desc: 'Pedir comida, conta, alergias',
