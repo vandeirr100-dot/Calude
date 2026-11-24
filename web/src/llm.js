@@ -37,8 +37,15 @@ const CORRECTION = {
 
 export const CURIOUS = `CURIOUS TEACHER: be genuinely curious and proactive, like a friend on a video call. Keep looking at the camera images and ASK the student about what you see and what they are doing ("What are you doing now?", "Is that your coffee?", "Are you cooking something?", "Where are you going later?"). One question at a time, short and simple for their level. When the student is quiet, look again and ask something new about the scene.`;
 export const PT_BRIDGE = `PORTUGUESE ANSWERS ARE WELCOME: the student may answer in Portuguese. When they do, first react naturally to WHAT they said (show you understood), then teach them how to say EXACTLY that in English: say the English sentence slowly and clearly, translate key words if needed, and ask them to repeat it (put that sentence in the phrase to repeat). After they repeat it, praise/correct and continue with a new curious question. Never scold them for using Portuguese.`;
-export function behaviorText({ curious, ptBridge }) {
-  return [curious ? CURIOUS : '', ptBridge ? PT_BRIDGE : ''].filter(Boolean).join('\n');
+export const MEANING = `MEANING MASTERY METHOD (mandatory, follow it for every sentence you teach):
+1) Every English sentence you teach comes with its Brazilian Portuguese translation (say it and show it).
+2) First the student must PRONOUNCE it correctly (the app measures it and tells you).
+3) Then CHECK COMPREHENSION: ask in Portuguese what it means ("O que significa '...'?" / "Como você traduz isso?") or ask the meaning of a key word. The student answers in Portuguese.
+4) If the translation is wrong, incomplete or vague, do NOT move on: explain again in a simpler way (break it into words, give an everyday example, a mental image), then ask again. Insist kindly until they translate it correctly and fully.
+5) Only after correct pronunciation AND correct translation, praise and move to the next sentence. A few turns later, quickly ask again the meaning of an earlier sentence to make sure it stuck.`;
+
+export function behaviorText({ curious, ptBridge, meaning }) {
+  return [meaning ? MEANING : '', curious ? CURIOUS : '', ptBridge ? PT_BRIDGE : ''].filter(Boolean).join('\n');
 }
 
 export function systemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', behavior = '' }) {
@@ -59,13 +66,20 @@ ${CORRECTION[correct] || CORRECTION.realtime}
 - From time to time review one of the student's saved words: ${words}.
 
 OUTPUT: reply ONLY with a JSON object (no markdown, no text outside it):
-{"speech":[{"lang":"pt","text":"..."},{"lang":"en","text":"..."}],"correction":{"said":"","correct":"","explain_pt":""},"repeat":"","repeat_pt":"","new_words":[{"en":"","pt":""}],"mood":"happy","seen":""}
+{"speech":[{"lang":"pt","text":"..."},{"lang":"en","text":"..."}],"correction":{"said":"","correct":"","explain_pt":""},"repeat":"","repeat_pt":"","expect":"repeat","new_words":[{"en":"","pt":""}],"mood":"happy","seen":""}
 - "speech": what you say out loud, split in parts by language, in speaking order. English parts use "lang":"en", Portuguese parts use "lang":"pt".
 - "correction": when correcting the student, "said" = what they said (as heard), "correct" = the right English sentence, "explain_pt" = a very short reason in Portuguese (max 12 words). Otherwise use empty strings.
 - "repeat": the English sentence the student should say now (or "" if none). "repeat_pt": its Portuguese translation.
+- "expect": what you expect the student to say next: "repeat" (repeat the sentence in English), "pt" (answer in Portuguese, e.g. the translation/meaning), or "any".
 - "new_words": up to 3 genuinely new useful words or expressions from this turn (English + Portuguese). Empty list if none.
 - "mood": one of happy, neutral, surprised, thinking.
 - "seen": a few words in Portuguese about what you see in the photo (or "" if there is no photo).`;
+}
+
+export const PASS_SCORE = 85;
+export function verdictText(score, missed = [], issue = '') {
+  if (score >= PASS_SCORE) return `VEREDITO DO APP: APROVADO (${score}%). Elogie brevemente e siga o método (confira se ele sabe o significado/tradução).`;
+  return `VEREDITO DO APP: NÃO APROVADO (${score}%, mínimo ${PASS_SCORE}%). NÃO diga que está certo e NÃO elogie a pronúncia. Mostre exatamente o som errado${missed && missed.length ? ` (${missed.join(', ')})` : ''}${issue ? ` — ${issue}` : ''}, fale a palavra devagar, explique em português como posicionar boca/língua e peça para repetir a mesma frase de novo.`;
 }
 
 export function eventText(kind, data = {}) {
@@ -79,6 +93,14 @@ export function eventText(kind, data = {}) {
       return `[O aluno tocou em "O que estou fazendo?"] Olhe a foto atual e ensine como dizer em inglês o que ele está fazendo ou o que aparece em destaque. Dê uma frase para ele repetir.${noCam}`;
     case 'curious':
       return `[O aluno está quieto há um tempo] Olhe a foto atual com curiosidade e pergunte, de forma curta e simpática, o que ele está fazendo ou sobre algo que você vê. Se ele responder em português, você vai ensinar a dizer aquilo em inglês.${noCam}`;
+    case 'attempt': {
+      let t = `[Resultado da tentativa — avaliação automática RIGOROSA feita pelo app ouvindo o áudio]\nFrase pedida: "${data.repeat}"\nO que o aluno disse: "${data.heard || '(inaudível)'}"\nNota: ${data.score}%.`;
+      if (data.missed && data.missed.length) t += ` Palavras com problema: ${data.missed.join(', ')}.`;
+      if (data.issue) t += ` Problema: ${data.issue}.`;
+      return t + '\n' + verdictText(data.score, data.missed, data.issue);
+    }
+    case 'notAttempt':
+      return `[O aluno não tentou repetir a frase; ele disse: "${data.heard}"] Responda ao que ele disse (se for português, entenda e ajude) e depois volte para a frase.`;
     case 'idle':
       return `[O aluno ficou um tempo em silêncio] Olhe a foto atual e puxe uma conversa curta sobre o que ele está fazendo agora, ou proponha uma frase nova para repetir.${noCam}`;
     case 'user': {
@@ -88,6 +110,7 @@ export function eventText(kind, data = {}) {
         t += `\nEle estava tentando repetir: "${data.repeat}". Pontuação automática de pronúncia: ${data.score}%.`;
         if (data.missed && data.missed.length) t += ` Palavras com problema: ${data.missed.join(', ')}.`;
         if (data.issue) t += ` Avaliação pelo som do áudio: ${data.issue}.`;
+        t += '\n' + verdictText(data.score, data.missed, data.issue);
       }
       return t + noCam;
     }
@@ -116,7 +139,7 @@ export function normalizeReply(raw) {
   const j = tryParse(raw);
   if (!j) {
     const txt = cleanSpeech(raw).slice(0, 400);
-    return { speech: txt ? [{ lang: 'en', text: txt }] : [], correction: null, repeat: '', repeat_pt: '', new_words: [], mood: 'neutral', seen: '' };
+    return { speech: txt ? [{ lang: 'en', text: txt }] : [], correction: null, repeat: '', repeat_pt: '', new_words: [], mood: 'neutral', seen: '', expect: 'any' };
   }
   let speech = Array.isArray(j.speech) ? j.speech : (typeof j.speech === 'string' ? [{ lang: 'en', text: j.speech }] : []);
   speech = speech
@@ -141,6 +164,7 @@ export function normalizeReply(raw) {
     new_words: words,
     mood: ['happy', 'neutral', 'surprised', 'thinking', 'sad'].includes(j.mood) ? j.mood : 'neutral',
     seen: cleanSpeech(j.seen),
+    expect: ['repeat', 'pt', 'any'].includes(j.expect) ? j.expect : (cleanSpeech(j.repeat) ? 'repeat' : 'any'),
   };
 }
 
@@ -302,6 +326,7 @@ export function pronunciationScore(target, alternatives) {
 
 // ================= modo ao vivo =================
 export function liveSystemPrompt({ level, vocab, correct = 'realtime', tutor = 'Lia', scenario = '', due = [], behavior = '' }) {
+  // (a pronúncia é medida pelo app; ver PRONUNCIATION IS MEASURED BY THE APP)
   const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(none yet)';
   const dueTxt = due.length ? due.slice(0, 12).map((w) => `${w.en} (${w.pt})`).join(', ') : '';
   return `You are ${tutor}, a warm, upbeat and patient English tutor on a LIVE VOICE + VIDEO CALL with a Brazilian student (native language: Brazilian Portuguese). You talk in real time, like a real person on a call.
@@ -322,10 +347,11 @@ SPEAKING STYLE
 - Student's saved words (review some from time to time): ${words}.
 ${dueTxt ? `- Words due for review today (review these first, one by one): ${dueTxt}.` : ''}
 
+PRONUNCIATION IS MEASURED BY THE APP: after you call show_phrase, stop talking and wait — the app records the student's attempt and sends you a strict automatic evaluation as a text message ("VEREDITO DO APP"). Always follow it: if it says NÃO APROVADO, never say it was correct and don't praise the pronunciation; point out the exact sound, model the word slowly, explain briefly in Portuguese how to place tongue/lips, and call show_phrase again with the same sentence. Only praise when it says APROVADO.
+
 SCREEN TOOLS — the student also SEES a screen. Use these tools while you speak (never read the tool arguments aloud, never mention the tools):
 - show_phrase: EVERY time you ask the student to repeat/say a sentence.
 - show_correction: EVERY time you correct a mistake.
-- show_pronunciation: right after the student tries to repeat a sentence (score 0-100 judged by the sound, problem words, a short tip in Portuguese).
 - save_words: when you teach new useful words/expressions (max 3 at a time).
 
 Start the call now: greet the student warmly and briefly, say in one sentence what you see on the camera (if anything) and start the first mini-lesson.`;
@@ -363,15 +389,17 @@ export async function ttsGemini(key, text, voice, slow = false) {
 export async function assessPronunciation(settings, wavB64, target, level) {
   const model = settings.model || PROVIDERS.gemini.model;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const prompt = `You are an expert English pronunciation coach for Brazilian learners (level: ${level}).
-The audio is a Brazilian student trying to say exactly: "${target}".
-Listen to the ACTUAL SOUNDS (not just whether words are recognizable). Check: th, initial h, extra final vowels, -ed/-s endings, vowel length, r, word stress, missing or extra words.
+  const prompt = `You are a STRICT English pronunciation examiner for Brazilian learners (level: ${level}).
+The audio is a Brazilian student who was asked to say exactly: "${target}".
+Listen to the ACTUAL SOUNDS, phoneme by phoneme. Do NOT be generous: being understandable is NOT enough.
+Typical Brazilian errors you MUST catch and penalize: "th" said as f/t/d/s; initial "h" said as Portuguese "r"; extra vowel added at the end of words (big -> "bigi", like -> "laiki"); "-ed" pronounced as an extra syllable or dropped; final "-s" dropped; short/long vowel confusion (live/leave, ship/sheep, full/fool); "i" in words like "mug/cup" said as "é/a"; "r" sounds; final "m/n" nasalized; wrong word stress; missing or extra words.
+Rules: any wrong sound in a word marks that word as not ok. One clearly wrong sound => score at most 80. Two or more wrong sounds or a missing word => at most 65. Different sentence or mostly unclear => at most 40. Only give 90+ if EVERY sound is correct and clear.
+If the student did not try to say the sentence at all (silence, said something else, spoke Portuguese), set "is_attempt": false.
 Reply ONLY with JSON:
-{"heard":"what the student actually said","score":0,"words":[{"w":"each word of the target, in order","ok":true}],"issue_pt":"the main problem in Portuguese (or empty)","tip_pt":"one short practical tip in Portuguese on how to make the sound (or a short praise)"}
-Score: 90-100 native-like/clear, 75-89 good with small issues, 50-74 understandable with clear problems, below 50 hard to understand or wrong sentence.`;
+{"is_attempt":true,"heard":"what the student actually said, as you heard it","score":0,"words":[{"w":"each word of the target sentence, in order","ok":true}],"issue_pt":"the exact wrong sound(s), in Portuguese (e.g. 'o TH de think saiu como F')","tip_pt":"one short practical tip in Portuguese on how to place tongue/lips (or short praise if perfect)"}`;
   const res = await httpPost(url, { 'Content-Type': 'application/json', 'x-goog-api-key': settings.key }, {
     contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'audio/wav', data: wavB64 } }, { text: prompt }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 700, responseMimeType: 'application/json' },
+    generationConfig: { temperature: 0, maxOutputTokens: 800, responseMimeType: 'application/json' },
   });
   if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
   const j = JSON.parse(res.text);
@@ -379,10 +407,20 @@ Score: 90-100 native-like/clear, 75-89 good with small issues, 50-74 understanda
   const text = cand && cand.content && (cand.content.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
   const r = tryParse(text) || {};
   const u = j.usageMetadata || {};
+  const heard = String(r.heard || '');
+  const words = Array.isArray(r.words) ? r.words.map((w) => ({ w: String(w.w || ''), ok: !!w.ok })) : [];
+  let score = Math.max(0, Math.min(100, Math.round(Number(r.score) || 0)));
+  // trava de segurança: a nota não pode passar das palavras erradas nem do texto ouvido
+  const bad = words.filter((w) => !w.ok).length;
+  if (bad === 1) score = Math.min(score, 80);
+  if (bad >= 2) score = Math.min(score, 65);
+  const txt = pronunciationScore(target, [heard]);
+  if (txt && txt.score < 100) score = Math.min(score, txt.score >= 80 ? 78 : 60);
   return {
-    heard: String(r.heard || ''),
-    score: Math.max(0, Math.min(100, Math.round(Number(r.score) || 0))),
-    words: Array.isArray(r.words) ? r.words.map((w) => ({ w: String(w.w || ''), ok: !!w.ok })) : [],
+    isAttempt: r.is_attempt !== false,
+    heard,
+    score,
+    words,
     issue: String(r.issue_pt || ''),
     tip: String(r.tip_pt || ''),
     usage: { in: u.promptTokenCount || 0, out: (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0) },

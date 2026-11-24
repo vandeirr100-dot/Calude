@@ -32,19 +32,6 @@ export const LIVE_TOOLS = [
     },
   },
   {
-    name: 'show_pronunciation',
-    description: 'After the student repeats the sentence, show a pronunciation score judged from the SOUND of their voice.',
-    parameters: {
-      type: 'object',
-      properties: {
-        score: { type: 'integer', description: '0 to 100' },
-        problem_words: { type: 'array', items: { type: 'string' }, description: 'Words pronounced badly' },
-        tip_pt: { type: 'string', description: 'Short tip in Portuguese about the specific sound, e.g. how to make TH' },
-      },
-      required: ['score'],
-    },
-  },
-  {
     name: 'save_words',
     description: 'Save useful new English words or expressions the student just learned (max 3 per call).',
     parameters: {

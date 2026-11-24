@@ -2,7 +2,7 @@ import { Avatar, PROFILES } from './avatar.js';
 import * as N from './native.js';
 import {
   PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch,
-  liveSystemPrompt, ttsGemini, assessPronunciation, behaviorText,
+  liveSystemPrompt, ttsGemini, assessPronunciation, behaviorText, PASS_SCORE,
 } from './llm.js';
 import { connectLive, LIVE_TOOLS, LIVE_MODELS } from './live.js';
 import {
@@ -23,7 +23,7 @@ const DEFAULTS = {
   provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
   handsFree: true, camDefault: true, correct: 'realtime', boost: 6,
   mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
-  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, curiousEvery: 25, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
+  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, meaning: true, curiousEvery: 25, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 // versões antigas forçavam volume alto: volta para um reforço moderado uma única vez
@@ -37,7 +37,7 @@ const naturalVoice = () => S.voiceMode === 'natural' && !!geminiKey();
 const tutorName = () => PROFILES[S.tutor].name;
 const isCurious = () => !!(S.curious || st.scenario.curious);
 const ptBridge = () => !!(S.ptBridge || st.scenario.ptBridge);
-const behavior = () => behaviorText({ curious: isCurious(), ptBridge: ptBridge() });
+const behavior = () => behaviorText({ curious: isCurious(), ptBridge: ptBridge(), meaning: !!S.meaning });
 const androidVoice = () => S.voice || (PROFILES[S.tutor].gender === 'm' ? 'auto:male' : 'auto:female');
 
 let vocab = store.get('vocab', []).map(srsInit);
@@ -47,7 +47,7 @@ let usage = store.get('usage', {}); // { 'AAAA-MM': {in, out} }
 
 // ---------- avatar ----------
 const avatar = new Avatar($('avatar'), S.tutor, S.quality);
-window.lia = { avatar };
+window.lia = { avatar, get st() { return st; } };
 
 // ---------- estado ----------
 const st = {
@@ -58,6 +58,7 @@ const st = {
   live: null, liveMode: false, micOn: true, dropAudio: false, turnOpen: false,
   tutorText: '', userText: '', lastSig: null, lastSigAt: 0, frameTimer: null,
   scenario: scenarioById(S.scenario), sess: null,
+  expect: 'any', awaitRepeat: false, cap: null, judging: false,
 };
 
 function newSession() {
@@ -116,6 +117,7 @@ function renderHome() {
   $('scenList').innerHTML = SCENARIOS.map((s) => `<button data-s="${s.id}" class="${s.id === st.scenario.id ? 'on' : ''}"><b>${s.emoji} ${esc(s.title)}</b><small>${esc(s.desc)}</small></button>`).join('');
   $('qCurious').classList.toggle('on', !!S.curious);
   $('qPt').classList.toggle('on', !!S.ptBridge);
+  $('qMeaning').classList.toggle('on', !!S.meaning);
   const b = $('wordsBadge');
   b.textContent = due || vocab.length; b.classList.toggle('hidden', !vocab.length);
   scheduleReminder();
@@ -336,7 +338,8 @@ function startListening() {
   avatar.setMode('listening');
   const callId = st.callId;
   // pronúncia pelo som: grava o áudio quando há frase para repetir
-  if (st.repeat && st.lang === 'en-US' && S.soundPron && geminiKey() && N.canRecord) {
+  const wantRepeat = st.repeat && st.expect === 'repeat' && st.lang === 'en-US';
+  if (wantRepeat && S.soundPron && geminiKey() && N.canRecord) {
     setStatus('ouvindo… (avaliando pelo som)');
     N.recordStart(9000, {
       onLevel: (v) => { $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, v * 0.4)).toFixed(3)); avatar.setMicLevel(v); },
@@ -348,7 +351,9 @@ function startListening() {
     return;
   }
   // com "responder em português" ligado e sem frase para repetir, ouve português e inglês
-  const lang = st.lang === 'pt-BR' ? 'pt-BR' : (ptBridge() && !st.repeat ? 'auto' : 'en-US');
+  const lang = st.lang === 'pt-BR' || st.expect === 'pt' ? 'pt-BR'
+    : wantRepeat ? 'en-US'
+      : (ptBridge() || S.meaning) ? 'auto' : 'en-US';
   st.heardLang = lang;
   setStatus(lang === 'pt-BR' ? 'ouvindo (português)…' : lang === 'auto' ? 'ouvindo (português ou inglês)…' : 'ouvindo…');
   N.listen(lang, {
@@ -391,9 +396,10 @@ async function onRecorded(wav) {
     const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, wav, target, S.level);
     addUsage(r.usage);
     showUser(r.heard || '…');
+    if (!r.isAttempt) { ask('user', { text: r.heard || '(inaudível)', lang: 'auto', bridge: ptBridge() }); return; }
     const marks = r.words.length ? r.words.map((w) => w.ok) : liveMatch(target, r.heard);
     markRepeat(marks, true);
-    const missed = r.words.filter((w) => !w.ok).map((w) => w.w);
+    const missed = r.words.filter((w) => !w.ok).map((w) => w.w.replace(/[.,!?;:]+$/, ''));
     st.repeatTries++;
     showScore({ score: r.score, missed, tip: r.tip });
     ask('user', { text: r.heard || '(inaudível)', lang: 'en-US', repeat: target, score: r.score, missed, issue: r.issue });
@@ -452,6 +458,7 @@ async function ask(kind, data = {}) {
 
   addWords(reply.new_words);
   setRepeat(reply.repeat, reply.repeat_pt);
+  st.expect = reply.expect || (reply.repeat ? 'repeat' : 'any');
   showCorr(reply.correction);
   if (reply.correction) avatar.setMood('neutral'); else avatar.setMood(reply.mood);
   showUser('');
@@ -466,7 +473,7 @@ async function ask(kind, data = {}) {
 function onUserSpeech(text, alts) {
   showUser(text);
   const data = { text, lang: st.heardLang || st.lang, bridge: ptBridge() };
-  if (st.repeat && data.lang === 'en-US') {
+  if (st.repeat && data.lang === 'en-US' && st.expect === 'repeat') {
     const res = pronunciationScore(st.repeat.text, alts);
     if (res) {
       st.repeatTries++;
@@ -591,7 +598,9 @@ function liveMicStart() {
   N.micStart({ call: S.duplex, half: !S.duplex, chunkMs: 100 }, {
     onData: (b64, lvl) => {
       if (callId !== st.callId || !st.live) return;
-      st.live.sendAudio(b64);
+      if (st.judging) return;
+      if (st.awaitRepeat && !st.speaking && !st.turnOpen && !st.practicing) { captureChunk(b64, lvl); }
+      else if (!st.awaitRepeat) st.live.sendAudio(b64);
       $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, lvl * 0.45)).toFixed(3));
       avatar.setMicLevel(lvl);
     },
@@ -602,6 +611,77 @@ function liveMicStart() {
     },
   });
   setMicUi(true);
+}
+
+// ---------- tentativa de repetição (ao vivo): grava, avalia com rigor e manda o veredito ----------
+function captureChunk(b64, lvl) {
+  const c = st.cap || (st.cap = { pre: [], chunks: [], speech: false, silent: 0, loud: 0, fl: [], floor: null, t0: Date.now() });
+  if (c.floor == null) { c.fl.push(lvl); if (c.fl.length >= 4) c.floor = Math.min(...c.fl); }
+  const thr = Math.max(0.14, (c.floor || 0) + 0.1);
+  if (!c.speech) {
+    c.pre.push(b64);
+    if (c.pre.length > 4) c.pre.shift();
+    if (lvl > thr) { c.loud++; if (c.loud >= 2) { c.speech = true; c.chunks = c.pre.slice(); setStatus('🎙️ ouvindo sua repetição…'); } } else c.loud = 0;
+    if (!c.speech && Date.now() - c.t0 > 20000) {
+      // ficou em silêncio: libera a conversa normal
+      st.cap = null; st.awaitRepeat = false; setStatus('sua vez — pode falar');
+    } else if (!c.speech) setStatus('sua vez: repita a frase 🎤');
+    return;
+  }
+  c.chunks.push(b64);
+  if (lvl < thr) c.silent++; else c.silent = 0;
+  if (c.silent >= 8 || c.chunks.length >= 100) { const chunks = c.chunks; st.cap = null; judgeLiveAttempt(chunks); }
+}
+
+function pcmChunksToWavB64(chunks) {
+  const parts = chunks.map((b) => { const bin = atob(b); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; });
+  const len = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(44 + len);
+  const dv = new DataView(out.buffer);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) out[o + i] = str.charCodeAt(i); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + len, true); w(8, 'WAVE'); w(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 16000, true); dv.setUint32(28, 32000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  w(36, 'data'); dv.setUint32(40, len, true);
+  let off = 44;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  let bin = '';
+  for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function judgeLiveAttempt(chunks) {
+  if (!st.repeat || !st.live) { st.awaitRepeat = false; return; }
+  const callId = st.callId;
+  const target = st.repeat.text;
+  st.judging = true;
+  setStatus('avaliando sua pronúncia…');
+  avatar.setMode('thinking');
+  try {
+    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, pcmChunksToWavB64(chunks), target, S.level);
+    if (callId !== st.callId || !st.live) return;
+    addUsage(r.usage);
+    showUser(r.heard || '…');
+    if (!r.isAttempt) {
+      st.awaitRepeat = false;
+      st.live.sendText(eventText('notAttempt', { heard: r.heard || '(inaudível)' }));
+      return;
+    }
+    const missed = r.words.filter((w) => !w.ok).map((w) => w.w.replace(/[.,!?;:]+$/, ''));
+    markRepeat(r.words.length ? r.words.map((w) => w.ok) : liveMatch(target, r.heard), true);
+    st.repeatTries++;
+    showScore({ score: r.score, missed, tip: r.tip });
+    if (r.score < PASS_SCORE) { avatar.setMood('neutral'); if (r.issue) showCorr({ said: r.heard, correct: target, explain: r.issue }); }
+    st.awaitRepeat = r.score < PASS_SCORE; // não passou: a próxima fala é outra tentativa
+    st.live.sendText(eventText('attempt', { repeat: target, heard: r.heard, score: r.score, missed, issue: r.issue }));
+  } catch (e) {
+    toast('Não consegui avaliar a pronúncia agora: ' + (e.message || e), 3500);
+    st.awaitRepeat = false;
+    if (st.live) st.live.sendText(`[O aluno tentou repetir "${target}", mas o app não conseguiu avaliar o áudio. Peça para ele repetir mais uma vez.]`);
+  } finally {
+    st.judging = false;
+    st.lastActivity = Date.now();
+  }
 }
 
 function finishUserUtterance() {
@@ -615,7 +695,11 @@ function handleToolCalls(calls, callId) {
   for (const c of calls) {
     const a = c.args || {};
     try {
-      if (c.name === 'show_phrase') setRepeat(String(a.phrase || ''), String(a.translation_pt || ''));
+      if (c.name === 'show_phrase') {
+        setRepeat(String(a.phrase || ''), String(a.translation_pt || ''));
+        // a próxima fala do aluno é a tentativa: o app grava e avalia com rigor
+        if (st.repeat && S.soundPron) { st.awaitRepeat = true; st.cap = null; }
+      }
       else if (c.name === 'show_correction') { showCorr({ said: String(a.said || ''), correct: String(a.correct || ''), explain: String(a.explanation_pt || '') }); avatar.setMood('neutral'); }
       else if (c.name === 'show_pronunciation') {
         const missed = Array.isArray(a.problem_words) ? a.problem_words.map(String) : [];
@@ -703,7 +787,7 @@ async function startCall(kind = 'start') {
   st.inCall = true;
   st.callId++;
   st.history = []; st.repeat = null; st.silences = 0; st.startedAt = Date.now(); st.dropAudio = false; st.turnOpen = false;
-  st.tutorText = ''; st.userText = ''; st.micOn = true;
+  st.tutorText = ''; st.userText = ''; st.micOn = true; st.expect = 'any'; st.awaitRepeat = false; st.cap = null; st.judging = false;
   st.sess = newSession();
   if (kind === 'review') st.scenario = scenarioById('review');
   document.body.classList.add('in-call');
@@ -755,7 +839,7 @@ function restartLesson() {
   st.callId++;
   st.busy = false; st.speaking = false; st.listening = false;
   N.stopSpeaking(); N.stopListening(); N.recordCancel(); setMicUi(false);
-  st.history = []; st.repeat = null; st.repeatTries = 0; st.silences = 0; st.dropAudio = false; st.turnOpen = false;
+  st.history = []; st.repeat = null; st.repeatTries = 0; st.silences = 0; st.dropAudio = false; st.turnOpen = false; st.expect = 'any'; st.awaitRepeat = false; st.cap = null; st.judging = false;
   showTutor([]); showUser(''); showRepeat(null); showCorr(null);
   avatar.setMode('idle'); avatar.setMood('happy'); avatar.nodOnce(0.6);
   toast('Aula reiniciada ↺', 1400);
@@ -860,6 +944,7 @@ function openSettings() {
   $('setCamDefault').checked = S.camDefault;
   $('setGoal').value = String(S.goal);
   $('setCurious').checked = S.curious;
+  $('setMeaning').checked = S.meaning;
   $('setPtBridge').checked = S.ptBridge;
   $('setCuriousEvery').value = String(S.curiousEvery);
   $('setReminder').checked = S.reminder;
@@ -912,6 +997,7 @@ function readSettingsForm() {
   s.camDefault = $('setCamDefault').checked;
   s.goal = Number($('setGoal').value) || 60;
   s.curious = $('setCurious').checked;
+  s.meaning = $('setMeaning').checked;
   s.ptBridge = $('setPtBridge').checked;
   s.curiousEvery = Number($('setCuriousEvery').value) || 25;
   s.reminder = $('setReminder').checked;
@@ -963,6 +1049,7 @@ $('scenList').onclick = (e) => {
 };
 $('qCurious').onclick = () => { S.curious = !S.curious; store.set('settings', S); renderHome(); toast(S.curious ? 'Professora curiosa: ela vai perguntar o que você está fazendo 🧐' : 'Professora curiosa desligada', 2200); };
 $('qPt').onclick = () => { S.ptBridge = !S.ptBridge; store.set('settings', S); renderHome(); toast(S.ptBridge ? 'Pode responder em português: ela te ensina a dizer em inglês 🇧🇷➜🇺🇸' : 'Respostas só em inglês', 2400); };
+$('qMeaning').onclick = () => { S.meaning = !S.meaning; store.set('settings', S); renderHome(); toast(S.meaning ? 'Ela vai traduzir cada frase e perguntar o significado até você acertar 📖' : 'Checagem de significado desligada', 2600); };
 $('tutorPick').onclick = (e) => {
   const b = e.target.closest('button[data-t]');
   if (!b || b.dataset.t === S.tutor) return;
@@ -988,6 +1075,7 @@ $('btnLook').onclick = () => {
 $('btnMic').onclick = () => {
   if (!st.inCall) return;
   if (st.liveMode) {
+    if (st.cap && st.cap.speech) { const chunks = st.cap.chunks; st.cap = null; judgeLiveAttempt(chunks); return; }
     if (st.speaking) {
       // interrompe a professora e passa a vez para você
       st.dropAudio = true;
@@ -1168,7 +1256,7 @@ setInterval(() => {
 
 // modo ao vivo: professora curiosa puxa assunto quando você fica quieto
 setInterval(() => {
-  if (!st.inCall || !st.liveMode || !st.live || st.speaking || st.practicing || st.turnOpen || !isCurious()) return;
+  if (!st.inCall || !st.liveMode || !st.live || st.speaking || st.practicing || st.turnOpen || st.awaitRepeat || st.judging || !isCurious()) return;
   if (Date.now() - st.lastActivity > S.curiousEvery * 1000) {
     st.lastActivity = Date.now();
     const f = st.camOn ? captureFrame(512, 0.6) : null;

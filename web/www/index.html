@@ -96,6 +96,7 @@
     <div class="quick">
       <button id="qCurious" class="qt"><span class="sw"></span>🧐 Professora curiosa<small>pergunta o que você está fazendo</small></button>
       <button id="qPt" class="qt"><span class="sw"></span>🇧🇷➜🇺🇸 Responder em português<small>ela ensina a dizer em inglês</small></button>
+      <button id="qMeaning" class="qt"><span class="sw"></span>📖 Garantir o significado<small>traduz e pergunta até você acertar</small></button>
     </div>
     <label class="mini-lbl">Escolha a aula</label>
     <div class="scen" id="scenList"></div>
@@ -143,6 +144,7 @@
 
     <label>Jeito da professora</label>
     <label class="check"><input id="setCurious" type="checkbox"> Curiosa: olha a câmera e pergunta o que você está fazendo (puxa assunto quando você fica quieto)</label>
+    <label class="check"><input id="setMeaning" type="checkbox"> Garantir o significado: depois de cada frase ela traduz, pergunta o que significa e insiste até eu acertar a tradução</label>
     <label class="check"><input id="setPtBridge" type="checkbox"> Posso responder em português: ela entende e me ensina a dizer aquilo em inglês</label>
     <label>Quando você ficar quieto, ela pergunta depois de</label>
     <select id="setCuriousEvery">
@@ -158,7 +160,7 @@
       <button data-v="light">Só erros grandes</button>
       <button data-v="off">Sem correção</button>
     </div>
-    <label class="check"><input id="setSoundPron" type="checkbox"> Avaliar a pronúncia pelo som da sua voz (Gemini)</label>
+    <label class="check"><input id="setSoundPron" type="checkbox"> Avaliação rigorosa da pronúncia pelo som (Gemini): só passa com 85% ou mais</label>
 
     <label>Seu nível</label>
     <div class="seg" id="setLevel">
