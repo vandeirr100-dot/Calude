@@ -655,11 +655,29 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void ensureAudible() {
+        public String ensureAudible() {
+            // respeita o volume do celular; só sobe para a metade se estiver mudo ou quase mudo
+            try {
+                ensureMediaAudio();
+                int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                int now = cur;
+                if (max > 0 && cur < Math.max(1, Math.round(max * 0.2f))) {
+                    now = Math.max(1, Math.round(max * 0.5f));
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, now, AudioManager.FLAG_SHOW_UI);
+                }
+                return "{\"before\":" + (max > 0 ? (float) cur / max : 1) + ",\"after\":" + (max > 0 ? (float) now / max : 1) + "}";
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
+        @JavascriptInterface
+        public void showVolume() {
             main.post(() -> {
                 try {
-                    // respeita o volume que o usuário deixou no celular (não mexe no volume)
-                    ensureMediaAudio();
+                    int stream = engine != null && engine.isCallMode() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
+                    audio.adjustStreamVolume(stream, AudioManager.ADJUST_SAME, AudioManager.FLAG_SHOW_UI);
                 } catch (Exception ignored) { }
             });
         }

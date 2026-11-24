@@ -713,7 +713,8 @@ async function startCall(kind = 'start') {
   updateLangChip();
   const t = today();
   if (!days.includes(t)) { days.push(t); days = days.slice(-400); store.set('days', days); }
-  N.ensureAudible();
+  const vol = N.ensureAudible();
+  if (vol.after > vol.before) toast(`O volume do celular estava ${vol.before > 0 ? 'muito baixo' : 'no mudo'} — coloquei na metade. Ajuste nos botões laterais.`, 4500);
   N.setBoost(S.boost);
   const wantCam = st.scenario.cam ? true : S.camDefault;
   st.facing = st.scenario.cam === 'environment' ? 'environment' : 'user';
@@ -1006,7 +1007,11 @@ $('btnMic').onclick = () => {
   st.silences = 0;
   startListening();
 };
+let spkHold = null;
+$('btnSpeaker').addEventListener('touchstart', () => { spkHold = setTimeout(() => { spkHold = 'done'; N.showVolume(); }, 550); }, { passive: true });
+$('btnSpeaker').addEventListener('touchend', () => { if (spkHold && spkHold !== 'done') clearTimeout(spkHold); });
 $('btnSpeaker').onclick = () => {
+  if (spkHold === 'done') { spkHold = null; return; }
   st.speakerOn = !st.speakerOn;
   $('btnSpeaker').classList.toggle('off', !st.speakerOn);
   if (!st.speakerOn) { N.stopSpeaking(); N.playerFlush(); }

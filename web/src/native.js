@@ -157,7 +157,11 @@ export function setBoost(db) {
   if (isNative && A.setBoost) try { A.setBoost(Math.round(db * 100)); } catch { /* ok */ }
 }
 export function ensureAudible() {
-  if (isNative && A.ensureAudible) try { A.ensureAudible(); } catch { /* ok */ }
+  if (isNative && A.ensureAudible) try { return JSON.parse(A.ensureAudible() || '{}'); } catch { /* ok */ }
+  return {};
+}
+export function showVolume() {
+  if (isNative && A.showVolume) try { A.showVolume(); } catch { /* ok */ }
 }
 
 export function openUrl(url) {
