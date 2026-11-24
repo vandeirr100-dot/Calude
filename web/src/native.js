@@ -66,7 +66,7 @@ export function speak(text, lang, rate, voiceName, h = {}) {
       ttsJobs.set(id, { text, h, resolve });
       A.speak(id, text, lang, rate, voiceName || '');
       // segurança: se o motor não responder
-      const est = 2500 + text.length * 120 / rate;
+      const est = 8000 + text.length * 150 / rate;
       setTimeout(() => { if (ttsJobs.has(id)) { ttsJobs.delete(id); resolve('timeout'); } }, est);
       return;
     }
@@ -151,6 +151,13 @@ export function stopListening() {
   sttH = null;
   if (isNative) A.stopListen();
   else if (webRec) { try { webRec.abort(); } catch { /* ok */ } }
+}
+
+export function setBoost(db) {
+  if (isNative && A.setBoost) try { A.setBoost(Math.round(db * 100)); } catch { /* ok */ }
+}
+export function ensureAudible() {
+  if (isNative && A.ensureAudible) try { A.ensureAudible(); } catch { /* ok */ }
 }
 
 export function openUrl(url) {

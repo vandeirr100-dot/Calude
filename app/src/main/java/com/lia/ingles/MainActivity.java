@@ -7,6 +7,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.media.audiofx.LoudnessEnhancer;
 import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
@@ -40,12 +44,17 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
@@ -66,11 +75,30 @@ public class MainActivity extends Activity {
     private PermissionRequest pendingWebPermission;
     private long lastLevelSent = 0;
 
+    // voz: sintetiza em arquivo e toca como MÍDIA com reforço de volume (LoudnessEnhancer)
+    private AudioManager audio;
+    private MediaPlayer player;
+    private LoudnessEnhancer enhancer;
+    private int boostMb = 900;
+    private String playingId = null;
+    private final Map<String, SynthJob> jobs = new ConcurrentHashMap<>();
+
+    private static class SynthJob {
+        String text;
+        File file;
+        volatile int sampleRate = 0;
+        volatile boolean direct = false;
+        final List<int[]> ranges = Collections.synchronizedList(new ArrayList<>());
+    }
+
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // botões de volume controlam o volume de MÍDIA (é por onde a Lia fala)
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);
+        audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         getWindow().setStatusBarColor(Color.parseColor("#3d2216"));
         getWindow().setNavigationBarColor(Color.parseColor("#22130c"));
 
@@ -146,13 +174,37 @@ public class MainActivity extends Activity {
             ttsReady = status == TextToSpeech.SUCCESS;
             if (ttsReady) {
                 tts.setLanguage(Locale.US);
+                tts.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build());
                 tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override public void onStart(String id) { ttsEvent("start", id, 0, 0); }
-                    @Override public void onDone(String id) { ttsEvent("done", id, 0, 0); }
-                    @Override public void onError(String id) { ttsEvent("error", id, 0, 0); }
-                    @Override public void onError(String id, int code) { ttsEvent("error", id, 0, 0); }
-                    @Override public void onStop(String id, boolean interrupted) { ttsEvent("stopped", id, 0, 0); }
-                    @Override public void onRangeStart(String id, int start, int end, int frame) { ttsEvent("range", id, start, end); }
+                    @Override public void onBeginSynthesis(String id, int sampleRateInHz, int audioFormat, int channelCount) {
+                        SynthJob j = jobs.get(id);
+                        if (j != null) j.sampleRate = sampleRateInHz;
+                    }
+                    @Override public void onStart(String id) {
+                        SynthJob j = jobs.get(id);
+                        if (j != null && !j.direct) return; // arquivo: o "start" vem quando começar a tocar
+                        ttsEvent("start", id, 0, 0);
+                    }
+                    @Override public void onDone(String id) {
+                        SynthJob j = jobs.get(id);
+                        if (j != null && !j.direct) { main.post(() -> playJob(id)); return; }
+                        jobs.remove(id);
+                        ttsEvent("done", id, 0, 0);
+                    }
+                    @Override public void onError(String id) { handleTtsError(id); }
+                    @Override public void onError(String id, int code) { handleTtsError(id); }
+                    @Override public void onStop(String id, boolean interrupted) {
+                        jobs.remove(id);
+                        ttsEvent("stopped", id, 0, 0);
+                    }
+                    @Override public void onRangeStart(String id, int start, int end, int frame) {
+                        SynthJob j = jobs.get(id);
+                        if (j != null && !j.direct) { j.ranges.add(new int[]{start, end, frame}); return; }
+                        ttsEvent("range", id, start, end);
+                    }
                 });
             }
         });
@@ -162,6 +214,112 @@ public class MainActivity extends Activity {
         }
 
         web.loadUrl("https://" + HOST + "/assets/www/index.html");
+    }
+
+    private void handleTtsError(String id) {
+        SynthJob j = jobs.get(id);
+        if (j != null && !j.direct) {
+            // não deu para gerar arquivo: fala direto (sem reforço)
+            j.direct = true;
+            main.post(() -> speakDirect(id, j.text));
+            return;
+        }
+        jobs.remove(id);
+        ttsEvent("error", id, 0, 0);
+    }
+
+    private void ensureMediaAudio() {
+        try {
+            if (audio != null && audio.getMode() != AudioManager.MODE_NORMAL) audio.setMode(AudioManager.MODE_NORMAL);
+        } catch (Exception ignored) { }
+    }
+
+    private void speakDirect(String id, String text) {
+        ensureMediaAudio();
+        Bundle params = new Bundle();
+        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id);
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1f);
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
+        int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
+        if (r != TextToSpeech.SUCCESS) { jobs.remove(id); ttsEvent("error", id, 0, 0); }
+    }
+
+    private void releasePlayer() {
+        try { if (enhancer != null) enhancer.release(); } catch (Exception ignored) { }
+        enhancer = null;
+        if (player != null) {
+            try { player.stop(); } catch (Exception ignored) { }
+            try { player.release(); } catch (Exception ignored) { }
+        }
+        player = null;
+    }
+
+    private void finishJob(String id, String type) {
+        if (id == null || !id.equals(playingId)) return;
+        playingId = null;
+        releasePlayer();
+        SynthJob j = jobs.remove(id);
+        if (j != null && j.file != null) { try { j.file.delete(); } catch (Exception ignored) { } }
+        ttsEvent(type, id, 0, 0);
+    }
+
+    private void playJob(final String id) {
+        final SynthJob j = jobs.get(id);
+        if (j == null) return; // foi interrompida
+        if (playingId != null) finishJob(playingId, "stopped");
+        releasePlayer();
+        try {
+            final MediaPlayer p = new MediaPlayer();
+            player = p;
+            p.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build());
+            p.setDataSource(j.file.getAbsolutePath());
+            p.prepare();
+            try {
+                enhancer = new LoudnessEnhancer(p.getAudioSessionId());
+                enhancer.setTargetGain(boostMb);
+                enhancer.setEnabled(boostMb > 0);
+            } catch (Exception e) {
+                enhancer = null;
+            }
+            playingId = id;
+            p.setOnCompletionListener(mp -> finishJob(id, "done"));
+            p.setOnErrorListener((mp, what, extra) -> { finishJob(id, "error"); return true; });
+            ensureMediaAudio();
+            p.setVolume(1f, 1f);
+            p.start();
+            ttsEvent("start", id, 0, 0);
+            // sincronia labial: dispara cada palavra no momento em que ela toca
+            final List<int[]> rs;
+            synchronized (j.ranges) { rs = new ArrayList<>(j.ranges); }
+            final int dur = Math.max(1, p.getDuration());
+            final int[] next = {0};
+            main.post(new Runnable() {
+                @Override public void run() {
+                    if (player != p || !id.equals(playingId)) return;
+                    int pos;
+                    try { pos = p.getCurrentPosition(); } catch (Exception e) { return; }
+                    while (next[0] < rs.size()) {
+                        int[] r = rs.get(next[0]);
+                        long t = (r[2] > 0 && j.sampleRate > 0)
+                                ? (long) r[2] * 1000L / j.sampleRate
+                                : (long) dur * r[0] / Math.max(1, j.text.length());
+                        if (t > pos + 40) break;
+                        ttsEvent("range", id, r[0], r[1]);
+                        next[0]++;
+                    }
+                    main.postDelayed(this, 30);
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "playJob", e);
+            releasePlayer();
+            playingId = null;
+            j.direct = true;
+            speakDirect(id, j.text);
+        }
     }
 
     private boolean hasPerm(String p) {
@@ -188,6 +346,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        releasePlayer();
         try { if (tts != null) tts.shutdown(); } catch (Exception ignored) { }
         try { if (recognizer != null) recognizer.destroy(); } catch (Exception ignored) { }
         pool.shutdownNow();
@@ -366,16 +525,62 @@ public class MainActivity extends Activity {
                 if (v != null) tts.setVoice(v); else tts.setLanguage(loc);
                 tts.setSpeechRate(rate <= 0 ? 1f : rate);
                 tts.setPitch(1.05f);
+                SynthJob j = new SynthJob();
+                j.text = text;
+                j.file = new File(getCacheDir(), "tts_" + Integer.toHexString(id.hashCode()) + ".wav");
+                jobs.put(id, j);
                 Bundle params = new Bundle();
                 params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id);
-                int r = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
-                if (r != TextToSpeech.SUCCESS) ttsEvent("error", id, 0, 0);
+                int r = tts.synthesizeToFile(text, params, j.file, id);
+                if (r != TextToSpeech.SUCCESS) {
+                    j.direct = true;
+                    speakDirect(id, text);
+                }
             });
         }
 
         @JavascriptInterface
         public void stopSpeak() {
-            main.post(() -> { if (ttsReady) tts.stop(); });
+            main.post(() -> {
+                if (playingId != null) finishJob(playingId, "stopped");
+                for (String k : new ArrayList<>(jobs.keySet())) {
+                    jobs.remove(k);
+                    ttsEvent("stopped", k, 0, 0);
+                }
+                if (ttsReady) tts.stop();
+            });
+        }
+
+        @JavascriptInterface
+        public void setBoost(int millibels) {
+            boostMb = Math.max(0, Math.min(2000, millibels));
+            main.post(() -> {
+                try {
+                    if (enhancer != null) { enhancer.setTargetGain(boostMb); enhancer.setEnabled(boostMb > 0); }
+                } catch (Exception ignored) { }
+            });
+        }
+
+        @JavascriptInterface
+        public float mediaVolume() {
+            try {
+                int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                return max > 0 ? (float) audio.getStreamVolume(AudioManager.STREAM_MUSIC) / max : 1f;
+            } catch (Exception e) {
+                return 1f;
+            }
+        }
+
+        @JavascriptInterface
+        public void ensureAudible() {
+            main.post(() -> {
+                try {
+                    ensureMediaAudio();
+                    int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                    int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+                    if (cur < max * 0.6f) audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(max * 0.85f), AudioManager.FLAG_SHOW_UI);
+                } catch (Exception ignored) { }
+            });
         }
 
         @JavascriptInterface

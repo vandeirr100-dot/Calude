@@ -10,7 +10,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('lia.' + k, JSON.stringify(v)); } catch { /* ok */ } },
 };
 
-const DEFAULTS = { provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60, handsFree: true, camDefault: true, correct: 'realtime' };
+const DEFAULTS = { provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60, handsFree: true, camDefault: true, correct: 'realtime', boost: 9 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] || '', model: S.models[S.provider] || PROVIDERS[S.provider].model });
 
@@ -368,6 +368,7 @@ async function startCall(kind = 'start') {
   updateLangChip();
   const today = new Date().toISOString().slice(0, 10);
   if (!days.includes(today)) { days.push(today); days = days.slice(-400); store.set('days', days); }
+  N.ensureAudible();
   if (S.camDefault) await camStart(); else camStop();
   // espera a câmera estabilizar um pouco antes da primeira foto
   setStatus('conectando…');
@@ -401,6 +402,7 @@ function openSettings() {
   fillProviderFields();
   document.querySelectorAll('#setLevel button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.level));
   $('setRate').value = S.rate; $('rateVal').textContent = S.rate;
+  $('setBoost').value = S.boost; $('boostVal').textContent = boostLabel(S.boost);
   $('setAutoLook').value = String(S.autoLook);
   $('setHandsFree').checked = S.handsFree;
   $('setCamDefault').checked = S.camDefault;
@@ -437,6 +439,7 @@ function readSettingsForm() {
   const lv = document.querySelector('#setLevel button.on');
   s.level = lv ? lv.dataset.v : 'iniciante';
   s.rate = Number($('setRate').value);
+  s.boost = Number($('setBoost').value);
   s.voice = $('setVoice').value;
   s.autoLook = Number($('setAutoLook').value);
   s.handsFree = $('setHandsFree').checked;
@@ -506,6 +509,12 @@ $('setProvider').onchange = () => {
 $('btnShowKey').onclick = () => { const k = $('setKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
 $('keyHelp').onclick = (e) => { e.preventDefault(); N.openUrl($('keyHelp').dataset.url); };
 $('setRate').oninput = () => { $('rateVal').textContent = $('setRate').value; };
+function boostLabel(v) { v = Number(v); return v <= 0 ? 'normal' : v <= 6 ? `+${v} (um pouco)` : v <= 12 ? `+${v} (alto)` : `+${v} (máximo)`; }
+$('setBoost').oninput = () => {
+  $('boostVal').textContent = boostLabel($('setBoost').value);
+  N.setBoost(Number($('setBoost').value));
+};
+$('btnTestVoice').onclick = () => { N.ensureAudible(); N.speak('Hello! This is my voice. Can you hear me well?', 'en-US', Number($('setRate').value), $('setVoice').value, { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) }); };
 document.querySelectorAll('#setCorrect button').forEach((b) => {
   b.onclick = () => document.querySelectorAll('#setCorrect button').forEach((x) => x.classList.toggle('on', x === b));
 });
@@ -542,6 +551,7 @@ document.querySelectorAll('#setLevel button').forEach((b) => {
 $('btnSave').onclick = () => {
   S = readSettingsForm();
   store.set('settings', S);
+  N.setBoost(S.boost);
   $('settings').classList.add('hidden');
   renderHome();
   toast('Configurações salvas ✔', 1500);
@@ -595,6 +605,7 @@ setInterval(() => {
   }
 }, 1000);
 
+N.setBoost(S.boost);
 renderHome();
 setTimeout(() => { avatar.setMood('happy'); avatar.nodOnce(0.8); }, 600);
 if (!S.keys[S.provider]) setTimeout(() => toast('Bem-vindo! Toque em "Configurar para começar".', 4000), 900);
