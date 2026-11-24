@@ -209,9 +209,25 @@ function showRepeat(r) {
   if (!r || !r.text) { box.classList.add('hidden'); return; }
   $('repeatText').innerHTML = tokensOf(r.text).map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ');
   box.classList.remove('played');
-  $('repeatPt').textContent = r.pt || '';
+  renderPt();
   $('score').classList.add('hidden');
   box.classList.remove('hidden');
+}
+function renderPt() {
+  const el = $('repeatPt');
+  const r = st.repeat;
+  if (!r || !r.pt) { el.textContent = ''; el.className = ''; return; }
+  if (S.meaning && !r.revealed) {
+    el.textContent = '🔒 A tradução aparece depois que você disser o que acha que significa';
+    el.className = 'locked';
+  } else { el.textContent = r.pt; el.className = 'revealed'; }
+}
+function revealPt(pt) {
+  if (!st.repeat) return;
+  if (pt) st.repeat.pt = pt;
+  if (st.repeat.revealed) return;
+  st.repeat.revealed = true;
+  renderPt();
 }
 function markRepeat(marks, final) {
   document.querySelectorAll('#repeatText .w').forEach((el, i) => {
@@ -248,11 +264,12 @@ function showScore(res) {
 }
 function setRepeat(text, pt) {
   if (!text) { st.repeat = null; showRepeat(null); return; }
-  if (!st.repeat || st.repeat.text !== text) {
+  const same = st.repeat && st.repeat.text === text;
+  if (!same) {
     st.repeatTries = 0;
     if (st.sess) st.sess.phrases.push(text);
   }
-  st.repeat = { text, pt };
+  st.repeat = { text, pt: pt || (same ? st.repeat.pt : ''), revealed: same ? st.repeat.revealed : false, passed: same ? st.repeat.passed : false };
   showRepeat(st.repeat);
 }
 function addWords(list) {
@@ -413,6 +430,7 @@ async function onRecorded(wav) {
     const missed = r.words.filter((w) => !w.ok).map((w) => w.w.replace(/[.,!?;:]+$/, ''));
     st.repeatTries++;
     showScore({ score: r.score, missed, tip: r.tip });
+    if (r.score >= PASS_SCORE && st.repeat) st.repeat.passed = true;
     ask('user', { text: r.heard || '(inaudível)', lang: 'tg', repeat: target, score: r.score, missed, issue: r.issue });
   } catch (e) {
     toast(e.message || String(e), 4000);
@@ -469,6 +487,8 @@ async function ask(kind, data = {}) {
 
   addWords(reply.new_words);
   setRepeat(reply.repeat, reply.repeat_pt);
+  if (reply.reveal || st.pendingReveal) revealPt(reply.repeat_pt);
+  st.pendingReveal = false;
   st.expect = reply.expect || (reply.repeat ? 'repeat' : 'any');
   showCorr(reply.correction);
   if (reply.correction) avatar.setMood('neutral'); else avatar.setMood(reply.mood);
@@ -483,12 +503,15 @@ async function ask(kind, data = {}) {
 
 function onUserSpeech(text, alts) {
   showUser(text);
+  // o aluno respondeu em português depois de acertar a pronúncia: já pode ver a tradução
+  if (st.repeat && st.repeat.passed && (st.heardLang === 'pt-BR' || st.heardLang === 'auto')) st.pendingReveal = true;
   const data = { text, lang: st.heardLang || st.lang, bridge: ptBridge() };
   if (st.repeat && data.lang === 'tg' && st.expect === 'repeat') {
     const res = pronunciationScore(st.repeat.text, alts);
     if (res) {
       st.repeatTries++;
       showScore(res);
+      if (res.score >= PASS_SCORE) st.repeat.passed = true;
       markRepeat(liveMatch(st.repeat.text, res.heard), true);
       Object.assign(data, { repeat: st.repeat.text, score: res.score, missed: res.missed });
     }
@@ -684,6 +707,7 @@ async function judgeLiveAttempt(chunks) {
     showScore({ score: r.score, missed, tip: r.tip });
     if (r.score < PASS_SCORE) { avatar.setMood('neutral'); if (r.issue) showCorr({ said: r.heard, correct: target, explain: r.issue }); }
     st.awaitRepeat = r.score < PASS_SCORE; // não passou: a próxima fala é outra tentativa
+    if (r.score >= PASS_SCORE && st.repeat) st.repeat.passed = true;
     st.live.sendText(eventText('attempt', { repeat: target, heard: r.heard, score: r.score, missed, issue: r.issue }));
   } catch (e) {
     toast('Não consegui avaliar a pronúncia agora: ' + (e.message || e), 3500);
@@ -698,6 +722,7 @@ async function judgeLiveAttempt(chunks) {
 function finishUserUtterance() {
   const u = st.userText.trim();
   st.userText = '';
+  if (u && st.repeat && st.repeat.passed && !st.repeat.revealed) setTimeout(() => revealPt(), 2500);
   if (u && st.repeat) markRepeat(liveMatch(st.repeat.text, u), true);
 }
 
@@ -721,7 +746,8 @@ function handleToolCalls(calls, callId) {
         }
         st.repeatTries++;
         showScore({ score, missed, tip: String(a.tip_pt || '') });
-      } else if (c.name === 'save_words') addWords(Array.isArray(a.words) ? a.words : []);
+      } else if (c.name === 'reveal_translation') revealPt(String(a.translation_pt || ''));
+      else if (c.name === 'save_words') addWords((Array.isArray(a.words) ? a.words : []).map((w) => ({ en: w.word || w.en, pt: w.pt })));
     } catch { /* ignora argumentos estranhos */ }
     responses.push({ id: c.id, name: c.name, response: { result: 'ok' }, scheduling: 'SILENT' });
   }

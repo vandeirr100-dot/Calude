@@ -32,6 +32,11 @@ export const LIVE_TOOLS = [
     },
   },
   {
+    name: 'reveal_translation',
+    description: 'Reveal on the student\'s screen the Portuguese translation of the current sentence (it is hidden until the student says what they think it means).',
+    parameters: { type: 'object', properties: { translation_pt: { type: 'string', description: 'Portuguese translation (optional, if different from before)' } } },
+  },
+  {
     name: 'save_words',
     description: 'Save useful new words or expressions (in the language being learned) the student just learned (max 3 per call).',
     parameters: {
