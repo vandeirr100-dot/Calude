@@ -1,6 +1,6 @@
 import { Avatar } from './avatar.js';
 import * as N from './native.js';
-import { PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore } from './llm.js';
+import { PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch } from './llm.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,7 +10,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('lia.' + k, JSON.stringify(v)); } catch { /* ok */ } },
 };
 
-const DEFAULTS = { provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60, handsFree: true, camDefault: true };
+const DEFAULTS = { provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60, handsFree: true, camDefault: true, correct: 'realtime' };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] || '', model: S.models[S.provider] || PROVIDERS[S.provider].model });
 
@@ -26,7 +26,7 @@ const st = {
   inCall: false, busy: false, speaking: false, listening: false,
   camOn: false, facing: 'user', stream: null, speakerOn: true,
   lang: 'en-US', repeat: null, repeatTries: 0, history: [],
-  lastActivity: Date.now(), silences: 0, callId: 0, startedAt: 0, newWords: 0,
+  lastActivity: Date.now(), silences: 0, callId: 0, startedAt: 0, newWords: 0, hearId: 0, practicing: false, corr: null,
 };
 
 // ---------- UI helpers ----------
@@ -88,13 +88,13 @@ function captureFrame() {
   if (!st.camOn) return null;
   const v = $('cam');
   if (!v.videoWidth) return null;
-  const W = 768, scale = Math.min(1, W / Math.max(v.videoWidth, v.videoHeight));
+  const W = 640, scale = Math.min(1, W / Math.max(v.videoWidth, v.videoHeight));
   const c = document.createElement('canvas');
   c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
   c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
   const pip = $('pip');
   pip.classList.remove('snap'); void pip.offsetWidth; pip.classList.add('snap');
-  return c.toDataURL('image/jpeg', 0.72).split(',')[1];
+  return c.toDataURL('image/jpeg', 0.66).split(',')[1];
 }
 
 // ---------- legendas ----------
@@ -105,10 +105,27 @@ function showUser(text) { $('userLine').textContent = text ? `Você: ${text}` : 
 function showRepeat(r) {
   const box = $('repeatBox');
   if (!r || !r.text) { box.classList.add('hidden'); return; }
-  $('repeatText').textContent = `"${r.text}"`;
+  $('repeatText').innerHTML = r.text.split(/\s+/).filter(Boolean).map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ');
+  box.classList.remove('played');
   $('repeatPt').textContent = r.pt || '';
   $('score').classList.add('hidden');
   box.classList.remove('hidden');
+}
+function markRepeat(marks, final) {
+  document.querySelectorAll('#repeatText .w').forEach((el, i) => {
+    el.classList.toggle('ok', !!marks[i]);
+    el.classList.toggle('miss', !!final && !marks[i]);
+  });
+}
+function showCorr(c) {
+  const box = $('corrBox');
+  if (!c) { box.classList.add('hidden'); document.body.classList.remove('has-corr'); return; }
+  $('corrWrong').textContent = c.said || '…';
+  $('corrRight').textContent = c.correct;
+  $('corrExp').textContent = c.explain || '';
+  box.classList.remove('hidden');
+  document.body.classList.add('has-corr');
+  st.corr = c;
 }
 function showScore(res) {
   const el = $('score');
@@ -168,7 +185,10 @@ function startListening() {
   setStatus(st.lang === 'pt-BR' ? 'ouvindo (português)…' : 'ouvindo…');
   const callId = st.callId;
   N.listen(st.lang, {
-    onPartial: (t) => showUser(t),
+    onPartial: (t) => {
+      showUser(t);
+      if (st.repeat && st.lang === 'en-US') markRepeat(liveMatch(st.repeat.text, t), false);
+    },
     onLevel: (v) => {
       $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, v * 0.4)).toFixed(3));
       avatar.setMicLevel(v);
@@ -220,7 +240,7 @@ async function ask(kind, data = {}) {
   const text = eventText(kind, { ...data, hasImage: !!img });
   let reply;
   try {
-    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab }), st.history.slice(-14), text, img);
+    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct }), st.history.slice(-14), text, img);
   } catch (e) {
     st.busy = false;
     if (callId !== st.callId) return;
@@ -230,6 +250,7 @@ async function ask(kind, data = {}) {
     return;
   }
   if (callId !== st.callId) return;
+  st.busy = false;
   st.history.push({ role: 'user', text: img ? text + '\n[foto da câmera enviada]' : text });
   st.history.push({ role: 'assistant', text: JSON.stringify(reply) });
   if (st.history.length > 30) st.history.splice(0, st.history.length - 30);
@@ -254,7 +275,8 @@ async function ask(kind, data = {}) {
     st.repeat = { text: reply.repeat, pt: reply.repeat_pt };
   } else st.repeat = null;
   showRepeat(st.repeat);
-  avatar.setMood(reply.mood);
+  showCorr(reply.correction);
+  if (reply.correction) avatar.setMood('neutral'); else avatar.setMood(reply.mood);
   showUser('');
 
   const parts = reply.speech.length ? reply.speech : (reply.repeat ? [{ lang: 'en', text: reply.repeat }] : []);
@@ -272,12 +294,65 @@ function onUserSpeech(text, alts) {
     if (res) {
       st.repeatTries++;
       showScore(res);
+      markRepeat(liveMatch(st.repeat.text, res.heard), true);
       $('score').classList.remove('hidden');
       if (res.score >= 80) { avatar.setMood('happy'); avatar.nodOnce(1); }
       Object.assign(data, { repeat: st.repeat.text, score: res.score, missed: res.missed });
     }
   }
   ask('user', data);
+}
+
+// ---------- ouvir pronúncia (tocar na frase) ----------
+let lastHear = { text: '', at: 0 };
+async function practiceSpeak(text, opts = {}) {
+  text = String(text || '').trim();
+  if (!text) return;
+  if (st.busy) { toast('Espere a Lia terminar de pensar…', 1200); return; }
+  // segundo toque na mesma frase em até 6 s = mais devagar
+  const now = Date.now();
+  const slow = opts.slow || (lastHear.text === text && now - lastHear.at < 6000);
+  lastHear = { text, at: now };
+  if (st.speaking) { st.callId++; N.stopSpeaking(); st.speaking = false; }
+  N.stopListening(); st.listening = false; setMicUi(false);
+  const myId = ++st.hearId;
+  const rate = slow ? Math.max(0.5, S.rate - 0.3) : S.rate;
+  avatar.setMode('speaking');
+  setStatus(slow ? 'falando devagar…' : 'ouça a pronúncia…');
+  if (opts.highlight) document.querySelectorAll('#repeatText .w').forEach((el) => el.classList.remove('ok', 'miss'));
+  const spans = opts.highlight ? [...document.querySelectorAll('#repeatText .w')] : [];
+  let wi = 0;
+  st.practicing = true;
+  await N.speak(text, 'en-US', rate, S.voice, {
+    onWord: (w) => {
+      avatar.speakWord(w, (90 + w.length * 62) / rate);
+      spans.forEach((el) => el.classList.remove('playing'));
+      if (spans[wi]) spans[wi].classList.add('playing');
+      wi++;
+    },
+  });
+  spans.forEach((el) => el.classList.remove('playing'));
+  st.practicing = false;
+  if (myId !== st.hearId) return;
+  avatar.speakingUntil = 0;
+  st.lastActivity = Date.now();
+  if (st.inCall && !st.busy) {
+    if (S.handsFree) startListening();
+    else { avatar.setMode('idle'); setStatus('toque no microfone para falar'); }
+  } else avatar.setMode('idle');
+}
+
+function restartLesson() {
+  if (!st.inCall) return;
+  st.callId++;
+  st.busy = false; st.speaking = false; st.listening = false;
+  N.stopSpeaking(); N.stopListening(); setMicUi(false);
+  st.history = []; st.repeat = null; st.repeatTries = 0; st.silences = 0;
+  showTutor([]); showUser(''); showRepeat(null); showCorr(null);
+  avatar.setMode('idle'); avatar.setMood('happy'); avatar.nodOnce(0.6);
+  toast('Aula reiniciada ↺', 1400);
+  setStatus('reiniciando…');
+  setTimeout(() => ask('start'), 500);
 }
 
 // ---------- ciclo da chamada ----------
@@ -288,7 +363,7 @@ async function startCall(kind = 'start') {
   st.history = []; st.repeat = null; st.silences = 0; st.newWords = 0; st.startedAt = Date.now();
   document.body.classList.add('in-call');
   ['captions', 'controls', 'callBar'].forEach((id) => $(id).classList.remove('hidden'));
-  showTutor([]); showUser(''); showRepeat(null);
+  showTutor([]); showUser(''); showRepeat(null); showCorr(null);
   $('btnSpeaker').classList.toggle('off', !st.speakerOn);
   updateLangChip();
   const today = new Date().toISOString().slice(0, 10);
@@ -309,6 +384,7 @@ function endCall() {
   avatar.setMode('idle'); avatar.setMood('happy');
   document.body.classList.remove('in-call');
   ['captions', 'controls', 'callBar'].forEach((id) => $(id).classList.add('hidden'));
+  showCorr(null);
   setStatus('Professora de inglês');
   const min = Math.max(1, Math.round((Date.now() - st.startedAt) / 60000));
   toast(`Aula encerrada: ${min} min${st.newWords ? ` · ${st.newWords} palavras novas` : ''}. See you soon!`, 4000);
@@ -328,6 +404,8 @@ function openSettings() {
   $('setAutoLook').value = String(S.autoLook);
   $('setHandsFree').checked = S.handsFree;
   $('setCamDefault').checked = S.camDefault;
+  document.querySelectorAll('#setCorrect button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.correct || 'realtime')));
+  $('btnResetAll').textContent = 'Apagar progresso';
   $('testResult').textContent = '';
   const sel = $('setVoice');
   const voices = N.listVoices().filter((v) => /^en/i.test(v.lang));
@@ -363,6 +441,8 @@ function readSettingsForm() {
   s.autoLook = Number($('setAutoLook').value);
   s.handsFree = $('setHandsFree').checked;
   s.camDefault = $('setCamDefault').checked;
+  const cm = document.querySelector('#setCorrect button.on');
+  s.correct = cm ? cm.dataset.v : 'realtime';
   return s;
 }
 
@@ -426,6 +506,36 @@ $('setProvider').onchange = () => {
 $('btnShowKey').onclick = () => { const k = $('setKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
 $('keyHelp').onclick = (e) => { e.preventDefault(); N.openUrl($('keyHelp').dataset.url); };
 $('setRate').oninput = () => { $('rateVal').textContent = $('setRate').value; };
+document.querySelectorAll('#setCorrect button').forEach((b) => {
+  b.onclick = () => document.querySelectorAll('#setCorrect button').forEach((x) => x.classList.toggle('on', x === b));
+});
+$('btnReload').onclick = () => { N.stopSpeaking(); N.stopListening(); location.reload(); };
+$('btnResetAll').onclick = () => {
+  const b = $('btnResetAll');
+  if (b.dataset.armed !== '1') {
+    b.dataset.armed = '1'; b.textContent = 'Toque de novo p/ confirmar';
+    setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Apagar progresso'; }, 4000);
+    return;
+  }
+  b.dataset.armed = '';
+  vocab = []; days = [];
+  store.set('vocab', vocab); store.set('days', days);
+  renderHome();
+  b.textContent = 'Progresso apagado ✔';
+};
+$('btnRestart').onclick = restartLesson;
+$('repeatBox').onclick = (e) => {
+  if (!st.repeat) return;
+  $('repeatBox').classList.add('played');
+  const w = e.target.closest('#repeatText .w');
+  if (w) { practiceSpeak(w.textContent.replace(/[^\w'’-]/g, ''), { slow: true }); return; }
+  practiceSpeak(st.repeat.text, { highlight: true });
+};
+$('corrBox').onclick = () => { if (st.corr) practiceSpeak(st.corr.correct); };
+$('tutorLine').onclick = (e) => {
+  const seg = e.target.closest('.seg.en');
+  if (seg) practiceSpeak(seg.textContent);
+};
 document.querySelectorAll('#setLevel button').forEach((b) => {
   b.onclick = () => document.querySelectorAll('#setLevel button').forEach((x) => x.classList.toggle('on', x === b));
 });
@@ -442,7 +552,7 @@ $('btnTest').onclick = async () => {
   out.textContent = 'Testando…';
   try {
     const r = await askLLM({ provider: s.provider, key: s.keys[s.provider], model: s.models[s.provider] || PROVIDERS[s.provider].model },
-      systemPrompt({ level: s.level, vocab: [] }), [], '[Teste de conexão] Diga apenas um oi curto.', null);
+      systemPrompt({ level: s.level, vocab: [], correct: s.correct }), [], '[Teste de conexão] Diga apenas um oi curto.', null);
     out.textContent = `✅ Funcionou! A Lia respondeu: "${r.speech.map((p) => p.text).join(' ')}"`;
   } catch (e) { out.textContent = '❌ ' + (e.message || e); }
 };
@@ -478,7 +588,7 @@ document.addEventListener('visibilitychange', () => {
 
 // olhar automático quando o aluno fica em silêncio
 setInterval(() => {
-  if (!st.inCall || st.busy || st.speaking || !st.camOn || !S.autoLook) return;
+  if (!st.inCall || st.busy || st.speaking || st.practicing || !st.camOn || !S.autoLook) return;
   if (Date.now() - st.lastActivity > S.autoLook * 1000) {
     st.lastActivity = Date.now();
     ask('idle');

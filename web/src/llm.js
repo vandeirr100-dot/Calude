@@ -26,7 +26,16 @@ const LEVELS = {
   avancado: 'ADVANCED (avançado). English only. Natural speed, phrasal verbs, idioms, follow-up questions. Correct subtle mistakes.',
 };
 
-export function systemPrompt({ level, vocab }) {
+const CORRECTION = {
+  realtime: `REAL-TIME CORRECTION MODE (the student asked to be corrected every time):
+- After EVERY sentence the student says in English, check grammar, word choice and pronunciation. The speech recognizer writes what it heard: strange or wrong words in the transcript usually mean a pronunciation problem — treat them as pronunciation mistakes.
+- If there is ANY mistake, fill "correction" with what they said, the correct sentence and a very short explanation in Portuguese, say the correct sentence out loud, and put the correct sentence in "repeat" so they practice it right away. Then continue the conversation in the next turn.
+- If the sentence was correct, leave "correction" empty and praise briefly (vary the praise).`,
+  light: `LIGHT CORRECTION MODE: only correct mistakes that change the meaning or make the sentence hard to understand. Fill "correction" only in those cases. Prioritize keeping the conversation flowing.`,
+  off: `NO CORRECTION MODE: do not correct the student's grammar; keep "correction" empty and just keep the conversation going naturally (you may model the right form in your own answer).`,
+};
+
+export function systemPrompt({ level, vocab, correct = 'realtime' }) {
   const words = (vocab || []).slice(-25).map((w) => w.en).join(', ') || '(nenhuma ainda)';
   return `You are Lia, a warm, upbeat and patient English tutor on a live video call with a Brazilian student (native language: Brazilian Portuguese).
 
@@ -38,14 +47,15 @@ CONVERSATION RULES
 - This is a SPOKEN call. Keep every turn short: at most 3 short sentences in total. Be natural, friendly and encouraging. No lists, no emojis, no markdown, no special symbols.
 - Almost every turn, give the student ONE short English sentence to say out loud (field "repeat"), preferably about what they are doing or seeing right now. Example: "I'm washing the dishes."
 - When the student tried to repeat a sentence you will receive an automatic pronunciation score. React honestly: if score >= 80 praise briefly and move on to something new; if lower, say which word(s) to improve and ask them to try once more (give the same "repeat"). Never ask more than twice for the same sentence.
-- If the student says something in English with mistakes, give the corrected version kindly.
+${CORRECTION[correct] || CORRECTION.realtime}
 - If the student speaks Portuguese or asks a question, answer briefly and bring them back to English practice.
 - About the image: talk about objects, actions, places, food, colors, weather. Never comment on the student's body, looks or appearance. If the image is dark or unclear, say it briefly and continue the conversation normally. Don't describe the same thing again if you already taught it — vary the topic.
 - From time to time review one of the student's saved words: ${words}.
 
 OUTPUT: reply ONLY with a JSON object (no markdown, no text outside it):
-{"speech":[{"lang":"pt","text":"..."},{"lang":"en","text":"..."}],"repeat":"","repeat_pt":"","new_words":[{"en":"","pt":""}],"mood":"happy","seen":""}
+{"speech":[{"lang":"pt","text":"..."},{"lang":"en","text":"..."}],"correction":{"said":"","correct":"","explain_pt":""},"repeat":"","repeat_pt":"","new_words":[{"en":"","pt":""}],"mood":"happy","seen":""}
 - "speech": what you say out loud, split in parts by language, in speaking order. English parts use "lang":"en", Portuguese parts use "lang":"pt".
+- "correction": when correcting the student, "said" = what they said (as heard), "correct" = the right English sentence, "explain_pt" = a very short reason in Portuguese (max 12 words). Otherwise use empty strings.
 - "repeat": the English sentence the student should say now (or "" if none). "repeat_pt": its Portuguese translation.
 - "new_words": up to 3 genuinely new useful words or expressions from this turn (English + Portuguese). Empty list if none.
 - "mood": one of happy, neutral, surprised, thinking.
@@ -96,7 +106,7 @@ export function normalizeReply(raw) {
   const j = tryParse(raw);
   if (!j) {
     const txt = cleanSpeech(raw).slice(0, 400);
-    return { speech: txt ? [{ lang: 'en', text: txt }] : [], repeat: '', repeat_pt: '', new_words: [], mood: 'neutral', seen: '' };
+    return { speech: txt ? [{ lang: 'en', text: txt }] : [], correction: null, repeat: '', repeat_pt: '', new_words: [], mood: 'neutral', seen: '' };
   }
   let speech = Array.isArray(j.speech) ? j.speech : (typeof j.speech === 'string' ? [{ lang: 'en', text: j.speech }] : []);
   speech = speech
@@ -106,8 +116,16 @@ export function normalizeReply(raw) {
     .filter((w) => w && w.en)
     .slice(0, 3)
     .map((w) => ({ en: String(w.en).trim(), pt: String(w.pt || '').trim() }));
+  let correction = null;
+  const c = j.correction;
+  if (c && typeof c === 'object' && cleanSpeech(c.correct)) {
+    const said = cleanSpeech(c.said), correct = cleanSpeech(c.correct);
+    const same = said.toLowerCase().replace(/[^a-z ]/g, '') === correct.toLowerCase().replace(/[^a-z ]/g, '');
+    if (!same) correction = { said, correct, explain: cleanSpeech(c.explain_pt) };
+  }
   return {
     speech,
+    correction,
     repeat: cleanSpeech(j.repeat),
     repeat_pt: cleanSpeech(j.repeat_pt),
     new_words: words,
@@ -130,6 +148,8 @@ function errorMessage(status, text) {
   return `Erro da IA (${status}): ${msg}`;
 }
 
+const thinkIdx = {};
+
 // history: [{role:'user'|'assistant', text}]  — a imagem vai só na última mensagem
 export async function askLLM(settings, system, history, userText, imageB64) {
   const prov = settings.provider;
@@ -149,13 +169,16 @@ export async function askLLM(settings, system, history, userText, imageB64) {
       contents,
       generationConfig: { temperature: 0.8, maxOutputTokens: 1200, responseMimeType: 'application/json' },
     };
-    const withThinking = JSON.parse(JSON.stringify(base));
-    withThinking.generationConfig.thinkingConfig = { thinkingLevel: 'low' };
     const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
-    res = await httpPost(url, headers, settings._noThink ? base : withThinking);
-    if (res.status === 400 && /thinking/i.test(res.text)) {
-      settings._noThink = true;
-      res = await httpPost(url, headers, base);
+    // menos "pensamento" = resposta mais rápida (conversa mais próxima do tempo real)
+    const levels = ['minimal', 'low', null];
+    let li = thinkIdx[model] || 0;
+    for (;;) {
+      const body = JSON.parse(JSON.stringify(base));
+      if (levels[li]) body.generationConfig.thinkingConfig = { thinkingLevel: levels[li] };
+      res = await httpPost(url, headers, body);
+      if (res.status === 400 && /thinking/i.test(res.text) && li < levels.length - 1) { li++; thinkIdx[model] = li; continue; }
+      break;
     }
     if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
     const j = JSON.parse(res.text);
@@ -190,10 +213,12 @@ export async function askLLM(settings, system, history, userText, imageB64) {
   messages.push({ role: 'user', content });
   const body = { model, messages, response_format: { type: 'json_object' } };
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
-  res = await httpPost('https://api.openai.com/v1/chat/completions', headers, settings._noEffort ? body : { ...body, reasoning_effort: 'low' });
-  if (res.status === 400 && /reasoning/i.test(res.text)) {
-    settings._noEffort = true;
-    res = await httpPost('https://api.openai.com/v1/chat/completions', headers, body);
+  const efforts = ['minimal', 'low', null];
+  let ei = thinkIdx['oa:' + model] || 0;
+  for (;;) {
+    res = await httpPost('https://api.openai.com/v1/chat/completions', headers, efforts[ei] ? { ...body, reasoning_effort: efforts[ei] } : body);
+    if (res.status === 400 && /reasoning/i.test(res.text) && ei < efforts.length - 1) { ei++; thinkIdx['oa:' + model] = ei; continue; }
+    break;
   }
   if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
   const j = JSON.parse(res.text);
@@ -215,6 +240,24 @@ function words(s) {
     .filter(Boolean);
 }
 
+// para destacar ao vivo: quais palavras da frase-alvo já foram ditas
+export function liveMatch(target, heard) {
+  const tokens = String(target || '').split(/\s+/).filter(Boolean);
+  const H = words(heard);
+  let j = 0;
+  return tokens.map((tok) => {
+    const parts = words(tok);
+    if (!parts.length) return true;
+    let ok = true;
+    for (const p of parts) {
+      const k = H.indexOf(p, j);
+      if (k === -1) { ok = false; break; }
+      j = k + 1;
+    }
+    return ok;
+  });
+}
+
 export function pronunciationScore(target, alternatives) {
   const T = words(target);
   if (!T.length) return null;
@@ -234,7 +277,7 @@ export function pronunciationScore(target, alternatives) {
       if (T[i - 1] === H[j - 1]) { matched.add(i - 1); i--; j--; }
       else if (dp[i - 1][j] >= dp[i][j - 1]) i--; else j--;
     }
-    const extra = Math.max(0, H.length - matched.size);
+    const extra = Math.max(0, H.length - T.length);
     let score = Math.round((matched.size / T.length) * 100 - Math.min(15, extra * 4));
     score = Math.max(0, Math.min(100, score));
     if (score > best.score || alt === alternatives[0] && best.score === 0) {

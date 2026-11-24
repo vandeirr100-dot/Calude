@@ -38,18 +38,28 @@
 <div id="captions" class="hidden">
   <div id="tutorLine"></div>
   <div id="userLine"></div>
+  <div id="corrBox" class="hidden">
+    <div class="c-row c-wrong"><span class="c-ic">✗</span><span id="corrWrong"></span></div>
+    <div class="c-row c-right" id="corrRightRow"><span class="c-ic">✓</span><span id="corrRight"></span><span class="spk">🔊</span></div>
+    <div id="corrExp"></div>
+  </div>
   <div id="repeatBox" class="hidden">
-    <div class="rep-main"><span class="lbl">Repita:</span> <span id="repeatText"></span></div>
+    <div class="rep-main"><span class="lbl">Repita:</span> <span id="repeatText"></span> <button id="btnHear" class="hear" aria-label="ouvir">🔊</button></div>
     <div id="repeatPt"></div>
     <div id="score" class="hidden"></div>
+    <div class="rep-tip">Toque na frase para ouvir · toque de novo para ouvir devagar · toque numa palavra para ouvir só ela</div>
   </div>
 </div>
 
 <div id="callBar" class="hidden">
+  <button id="btnRestart" class="chip" aria-label="Reiniciar aula">
+    <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Reiniciar
+  </button>
   <button id="langChip" class="chip">Você fala em: <b>Inglês</b></button>
   <button id="btnLook" class="chip look">
     <svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>
-    O que estou fazendo?
+    O que faço?
   </button>
 </div>
 
@@ -125,6 +135,14 @@
     <label>Voz em inglês</label>
     <select id="setVoice"><option value="">Automática</option></select>
 
+    <label>Correção dos seus erros</label>
+    <div class="seg" id="setCorrect">
+      <button data-v="realtime">Em tempo real</button>
+      <button data-v="light">Só erros grandes</button>
+      <button data-v="off">Sem correção</button>
+    </div>
+    <small class="hint">Em tempo real: a Lia corrige cada frase que você fala (gramática, palavra errada e pronúncia), mostra a forma certa e pede para você repetir.</small>
+
     <label>Olhar pela câmera sozinha quando você ficar em silêncio</label>
     <select id="setAutoLook">
       <option value="0">Desligado</option>
@@ -133,7 +151,7 @@
       <option value="120">A cada 2 minutos</option>
     </select>
 
-    <label class="check"><input id="setHandsFree" type="checkbox"> Mãos livres: ouvir automaticamente depois que a Lia fala</label>
+    <label class="check"><input id="setHandsFree" type="checkbox"> Conversa contínua: a Lia escuta sozinha depois de falar (sem apertar botão)</label>
     <label class="check"><input id="setCamDefault" type="checkbox"> Começar a aula com a câmera ligada</label>
 
     <div class="row">
@@ -142,6 +160,10 @@
     </div>
     <p id="testResult" class="hint"></p>
     <p class="hint">Sua chave fica salva só neste celular. As fotos da câmera são enviadas apenas para a IA escolhida, no momento de cada resposta.</p>
+    <div class="row">
+      <button id="btnReload" class="ghost-btn">↺ Reiniciar o app</button>
+      <button id="btnResetAll" class="ghost-btn danger">Apagar progresso</button>
+    </div>
     <p class="hint" id="ver"></p>
   </div>
 </section>
