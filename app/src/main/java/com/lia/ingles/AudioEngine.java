@@ -91,9 +91,6 @@ public class AudioEngine {
                     //noinspection deprecation
                     am.setSpeakerphoneOn(!am.isWiredHeadsetOn());
                 }
-                int max = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL);
-                int cur = am.getStreamVolume(AudioManager.STREAM_VOICE_CALL);
-                if (cur < max) am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, max, 0);
             } else {
                 if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();
                 else {

@@ -21,11 +21,13 @@ const store = {
 
 const DEFAULTS = {
   provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
-  handsFree: true, camDefault: true, correct: 'realtime', boost: 9,
+  handsFree: true, camDefault: true, correct: 'realtime', boost: 6,
   mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
   tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, curiousEvery: 25, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
+// versões antigas forçavam volume alto: volta para um reforço moderado uma única vez
+if (!S.volFix1) { if (S.boost >= 9) S.boost = 6; S.volFix1 = true; store.set('settings', S); }
 const VOICES = { lia: 'Aoede', maya: 'Kore', ben: 'Puck' };
 
 const geminiKey = () => (S.keys.gemini || '').trim();

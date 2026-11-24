@@ -658,10 +658,8 @@ public class MainActivity extends Activity {
         public void ensureAudible() {
             main.post(() -> {
                 try {
+                    // respeita o volume que o usuário deixou no celular (não mexe no volume)
                     ensureMediaAudio();
-                    int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-                    int cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
-                    if (cur < max * 0.6f) audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(max * 0.85f), AudioManager.FLAG_SHOW_UI);
                 } catch (Exception ignored) { }
             });
         }
