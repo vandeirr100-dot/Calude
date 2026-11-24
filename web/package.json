@@ -1,0 +1,15 @@
+{
+  "name": "lia-ingles-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Interface, avatar 3D e lógica da Lia (empacotados dentro do APK)",
+  "scripts": {
+    "build": "esbuild src/app.js --bundle --format=iife --minify --target=chrome90 --outfile=../app/src/main/assets/www/bundle.js && cp www/index.html www/style.css ../app/src/main/assets/www/"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

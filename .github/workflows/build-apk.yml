@@ -1,0 +1,50 @@
+name: Gerar APK da Lia
+
+on:
+  push:
+    branches: [app-ingles]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v5
+
+      - name: Preparar Java 17 e Gradle
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          curl -sSfL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-8.11.1/bin" >> "$GITHUB_PATH"
+
+      - name: Montar a interface (avatar 3D + app)
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Compilar o APK
+        run: |
+          java -version
+          gradle --version
+          gradle assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk LiaIngles.apk
+          ls -la LiaIngles.apk
+
+      - name: Publicar para download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          gh release create "$TAG" LiaIngles.apk \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Lia Inglês $TAG" \
+            --latest \
+            --notes "Baixe o arquivo **LiaIngles.apk** abaixo pelo celular e toque nele para instalar. Na primeira vez o Android pede para permitir a instalação de apps desta fonte."

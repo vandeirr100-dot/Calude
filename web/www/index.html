@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Lia — Inglês no dia a dia</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="bg" aria-hidden="true">
+  <i style="--x:8%;--y:12%;--s:90px;--d:0s"></i>
+  <i style="--x:78%;--y:6%;--s:120px;--d:-3s"></i>
+  <i style="--x:88%;--y:38%;--s:70px;--d:-6s"></i>
+  <i style="--x:4%;--y:46%;--s:110px;--d:-2s"></i>
+  <i style="--x:60%;--y:22%;--s:60px;--d:-5s"></i>
+  <i style="--x:22%;--y:30%;--s:50px;--d:-8s"></i>
+  <i style="--x:92%;--y:70%;--s:90px;--d:-4s"></i>
+  <i style="--x:12%;--y:76%;--s:80px;--d:-7s"></i>
+  <div class="garland"></div>
+</div>
+<canvas id="avatar"></canvas>
+
+<header id="top">
+  <div class="badge">
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="currentColor"/></svg></div>
+    <div><b>Lia</b><small id="status">Professora de inglês</small></div>
+  </div>
+  <button id="btnMenu" class="icon-btn" aria-label="Configurações">
+    <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+  </button>
+</header>
+
+<div id="pip" class="hidden">
+  <video id="cam" playsinline muted autoplay></video>
+  <span class="pip-tag">toque p/ virar</span>
+</div>
+
+<div id="captions" class="hidden">
+  <div id="tutorLine"></div>
+  <div id="userLine"></div>
+  <div id="repeatBox" class="hidden">
+    <div class="rep-main"><span class="lbl">Repita:</span> <span id="repeatText"></span></div>
+    <div id="repeatPt"></div>
+    <div id="score" class="hidden"></div>
+  </div>
+</div>
+
+<div id="callBar" class="hidden">
+  <button id="langChip" class="chip">Você fala em: <b>Inglês</b></button>
+  <button id="btnLook" class="chip look">
+    <svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>
+    O que estou fazendo?
+  </button>
+</div>
+
+<nav id="controls" class="hidden">
+  <button id="btnSpeaker" class="ctl" aria-label="Som">
+    <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path class="waves" d="M16 9a4 4 0 010 6M18.5 6.5a7.5 7.5 0 010 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="slash" d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <button id="btnMic" class="ctl" aria-label="Microfone">
+    <span class="ring"></span>
+    <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="slash" d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <button id="btnCam" class="ctl" aria-label="Câmera">
+    <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 10.5L21 7v10l-5.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path class="slash" d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <button id="btnHang" class="ctl hang" aria-label="Encerrar">
+    <svg viewBox="0 0 24 24"><path d="M3 14.5c5-5 13-5 18 0l-2.2 2.4-3.6-1.4v-2.8a12 12 0 00-6.4 0v2.8l-3.6 1.4z" fill="currentColor"/></svg>
+  </button>
+  <button id="btnWords" class="ctl" aria-label="Minhas palavras">
+    <svg viewBox="0 0 24 24"><path d="M5 4h10a3 3 0 013 3v13H8a3 3 0 01-3-3z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 17a3 3 0 013-3h10M9 8h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span id="wordsBadge" class="badge-n hidden">0</span>
+  </button>
+</nav>
+
+<section id="home">
+  <div class="card">
+    <h1>Oi! Eu sou a Lia</h1>
+    <p>Sua professora de inglês que vê o seu dia a dia pela câmera e te ensina com o que você está fazendo agora.</p>
+    <div class="stats"><span id="streak">🔥 0 dias</span><span id="wordCount">📚 0 palavras</span><span id="levelChip">Iniciante</span></div>
+    <button id="btnStart" class="big-btn">
+      <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2.5" fill="currentColor"/><path d="M15.5 10.5L21 7v10l-5.5-3.5z" fill="currentColor"/></svg>
+      <span>Começar aula</span>
+    </button>
+    <div class="row">
+      <button id="btnReview" class="ghost-btn">Revisar palavras</button>
+      <button id="btnHomeWords" class="ghost-btn">Minhas palavras</button>
+    </div>
+  </div>
+</section>
+
+<section id="settings" class="sheet hidden">
+  <div class="sheet-body">
+    <div class="sheet-head"><h2>Configurações</h2><button class="close" data-close="settings">✕</button></div>
+
+    <label>Inteligência artificial (o "cérebro" da Lia)</label>
+    <select id="setProvider">
+      <option value="gemini">Google Gemini — tem cota gratuita</option>
+      <option value="anthropic">Anthropic Claude</option>
+      <option value="openai">OpenAI (ChatGPT)</option>
+    </select>
+
+    <label>Chave da API</label>
+    <div class="keyrow">
+      <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole sua chave aqui">
+      <button id="btnShowKey" class="mini">👁</button>
+    </div>
+    <a id="keyHelp" class="help" href="#">Como conseguir uma chave →</a>
+
+    <label>Modelo</label>
+    <input id="setModel" type="text" spellcheck="false">
+    <small class="hint">Pode deixar o padrão. Se a empresa lançar um modelo novo, é só trocar o nome aqui.</small>
+
+    <label>Seu nível</label>
+    <div class="seg" id="setLevel">
+      <button data-v="iniciante">Iniciante</button>
+      <button data-v="basico">Básico</button>
+      <button data-v="intermediario">Intermediário</button>
+      <button data-v="avancado">Avançado</button>
+    </div>
+
+    <label>Velocidade da voz da Lia: <b id="rateVal">0.9</b></label>
+    <input id="setRate" type="range" min="0.6" max="1.3" step="0.05">
+
+    <label>Voz em inglês</label>
+    <select id="setVoice"><option value="">Automática</option></select>
+
+    <label>Olhar pela câmera sozinha quando você ficar em silêncio</label>
+    <select id="setAutoLook">
+      <option value="0">Desligado</option>
+      <option value="30">A cada 30 segundos</option>
+      <option value="60">A cada 1 minuto</option>
+      <option value="120">A cada 2 minutos</option>
+    </select>
+
+    <label class="check"><input id="setHandsFree" type="checkbox"> Mãos livres: ouvir automaticamente depois que a Lia fala</label>
+    <label class="check"><input id="setCamDefault" type="checkbox"> Começar a aula com a câmera ligada</label>
+
+    <div class="row">
+      <button id="btnTest" class="ghost-btn">Testar conexão</button>
+      <button id="btnSave" class="big-btn small">Salvar</button>
+    </div>
+    <p id="testResult" class="hint"></p>
+    <p class="hint">Sua chave fica salva só neste celular. As fotos da câmera são enviadas apenas para a IA escolhida, no momento de cada resposta.</p>
+    <p class="hint" id="ver"></p>
+  </div>
+</section>
+
+<section id="vocab" class="sheet hidden">
+  <div class="sheet-body">
+    <div class="sheet-head"><h2>Minhas palavras</h2><button class="close" data-close="vocab">✕</button></div>
+    <p class="hint">Toque no alto-falante para ouvir. Elas também aparecem nas revisões com a Lia.</p>
+    <ul id="vocabList"></ul>
+  </div>
+</section>
+
+<div id="toast"></div>
+<script src="bundle.js"></script>
+</body>
+</html>

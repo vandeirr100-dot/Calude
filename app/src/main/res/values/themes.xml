@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LiaTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/lia_bg</item>
+        <item name="android:statusBarColor">@color/lia_bar</item>
+        <item name="android:navigationBarColor">@color/lia_bg</item>
+    </style>
+    <color name="lia_bg">#2A1810</color>
+    <color name="lia_bar">#3D2216</color>
+    <color name="lia_icon_bg">#7C5CFF</color>
+</resources>
