@@ -2,8 +2,9 @@ import { Avatar, PROFILES } from './avatar.js';
 import * as N from './native.js';
 import {
   PROVIDERS, systemPrompt, eventText, askLLM, pronunciationScore, liveMatch,
-  liveSystemPrompt, ttsGemini, assessPronunciation, behaviorText, PASS_SCORE,
+  liveSystemPrompt, ttsGemini, assessPronunciation, behaviorText, PASS_SCORE, setLanguage,
 } from './llm.js';
+import { LANGS, langOf, tokensOf } from './langs.js';
 import { connectLive, LIVE_TOOLS, LIVE_MODELS } from './live.js';
 import {
   SCENARIOS, scenarioById, srsInit, srsGrade, dueWords, boxLabel, today, weekMinutes, monthKey,
@@ -23,12 +24,14 @@ const DEFAULTS = {
   provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
   handsFree: true, camDefault: true, correct: 'realtime', boost: 6,
   mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
-  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, meaning: true, curiousEvery: 25, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
+  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, meaning: true, curiousEvery: 25, target: 'en', explain: 'pt', voiceLang: '', goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 // versões antigas forçavam volume alto: volta para um reforço moderado uma única vez
 if (!S.volFix1) { if (S.boost >= 9) S.boost = 6; S.volFix1 = true; store.set('settings', S); }
 const VOICES = { lia: 'Aoede', maya: 'Kore', ben: 'Puck' };
+const TL = () => langOf(S.target);
+setLanguage(S.target, S.explain);
 
 const geminiKey = () => (S.keys.gemini || '').trim();
 const settingsForLLM = () => ({ provider: S.provider, key: S.keys[S.provider] || '', model: S.models[S.provider] || PROVIDERS[S.provider].model });
@@ -38,9 +41,11 @@ const tutorName = () => PROFILES[S.tutor].name;
 const isCurious = () => !!(S.curious || st.scenario.curious);
 const ptBridge = () => !!(S.ptBridge || st.scenario.ptBridge);
 const behavior = () => behaviorText({ curious: isCurious(), ptBridge: ptBridge(), meaning: !!S.meaning });
-const androidVoice = () => S.voice || (PROFILES[S.tutor].gender === 'm' ? 'auto:male' : 'auto:female');
+const androidVoice = () => (S.voice && S.voiceLang === S.target ? S.voice : (PROFILES[S.tutor].gender === 'm' ? 'auto:male' : 'auto:female'));
 
 let vocab = store.get('vocab', []).map(srsInit);
+// palavras do idioma que está sendo estudado agora
+const myVocab = () => vocab.filter((w) => (w.lang || 'en') === S.target);
 let days = store.get('days', []);
 let mins = store.get('mins', {});
 let usage = store.get('usage', {}); // { 'AAAA-MM': {in, out} }
@@ -53,7 +58,7 @@ window.lia = { avatar, get st() { return st; } };
 const st = {
   inCall: false, busy: false, speaking: false, listening: false, practicing: false,
   camOn: false, facing: 'user', stream: null, speakerOn: true,
-  lang: 'en-US', repeat: null, repeatTries: 0, history: [], corr: null,
+  lang: 'tg', repeat: null, repeatTries: 0, history: [], corr: null,
   lastActivity: Date.now(), silences: 0, callId: 0, hearId: 0, startedAt: 0,
   live: null, liveMode: false, micOn: true, dropAudio: false, turnOpen: false,
   tutorText: '', userText: '', lastSig: null, lastSigAt: 0, frameTimer: null,
@@ -99,15 +104,19 @@ function renderHome() {
   if (!set.has(key(d))) d.setDate(d.getDate() - 1);
   while (set.has(key(d))) { streak++; d.setDate(d.getDate() - 1); }
   $('streak').textContent = `🔥 ${streak} ${streak === 1 ? 'dia' : 'dias'}`;
-  $('wordCount').textContent = `📚 ${vocab.length} ${vocab.length === 1 ? 'palavra' : 'palavras'}`;
+  const mv = myVocab();
+  $('wordCount').textContent = `📚 ${mv.length} ${mv.length === 1 ? 'palavra' : 'palavras'}`;
+  $('homeTarget').value = S.target;
+  $('homeExplain').value = S.explain;
+  $('status').textContent = st.inCall ? $('status').textContent : `Professor${PROFILES[S.tutor].gender === 'm' ? '' : 'a'} de ${TL().name}`;
   const lv = { iniciante: 'Iniciante', basico: 'Básico', intermediario: 'Intermediário', avancado: 'Avançado' };
   $('levelChip').textContent = `🎯 ${lv[S.level]}`;
   const wk = weekMinutes(mins);
   $('goalTxt').textContent = `${wk} de ${S.goal} min${wk >= S.goal ? ' ✅' : ''}`;
   $('goalBar').style.width = `${Math.min(100, (wk / S.goal) * 100)}%`;
-  const due = dueWords(vocab).length;
+  const due = dueWords(mv).length;
   $('dueN').textContent = due;
-  $('btnReview').style.opacity = vocab.length ? 1 : 0.5;
+  $('btnReview').style.opacity = mv.length ? 1 : 0.5;
   const hasKey = !!S.keys[S.provider];
   $('btnStart').querySelector('span').textContent = hasKey ? `Começar aula com ${tutorName()}` : 'Configurar para começar';
   const p = PROFILES[S.tutor];
@@ -117,9 +126,10 @@ function renderHome() {
   $('scenList').innerHTML = SCENARIOS.map((s) => `<button data-s="${s.id}" class="${s.id === st.scenario.id ? 'on' : ''}"><b>${s.emoji} ${esc(s.title)}</b><small>${esc(s.desc)}</small></button>`).join('');
   $('qCurious').classList.toggle('on', !!S.curious);
   $('qPt').classList.toggle('on', !!S.ptBridge);
+  $('qPt').innerHTML = `<span class="sw"></span>🇧🇷➜${TL().flag} Responder em português<small>ela ensina a dizer em ${TL().name}</small>`;
   $('qMeaning').classList.toggle('on', !!S.meaning);
   const b = $('wordsBadge');
-  b.textContent = due || vocab.length; b.classList.toggle('hidden', !vocab.length);
+  b.textContent = due || mv.length; b.classList.toggle('hidden', !mv.length);
   scheduleReminder();
 }
 
@@ -128,12 +138,12 @@ function scheduleReminder() {
   const [h, m] = String(S.reminderTime || '19:00').split(':').map(Number);
   const next = new Date(); next.setHours(h || 19, m || 0, 0, 0);
   if (next < new Date()) next.setDate(next.getDate() + 1);
-  const n = dueWords(vocab, next.getTime()).length;
-  const text = n ? `Você tem ${n} ${n === 1 ? 'palavra' : 'palavras'} para revisar hoje. São só uns minutinhos!` : 'Que tal 5 minutinhos de conversa em inglês hoje?';
+  const n = dueWords(myVocab(), next.getTime()).length;
+  const text = n ? `Você tem ${n} ${n === 1 ? 'palavra' : 'palavras'} para revisar hoje. São só uns minutinhos!` : `Que tal 5 minutinhos de ${TL().name} hoje?`;
   const sig = `${S.reminder}|${h}|${m}|${tutorName()}|${text}`;
   if (sig === lastReminderSig) return;
   lastReminderSig = sig;
-  N.setReminder(!!S.reminder, h || 19, m || 0, `Hora do inglês com ${tutorName()}! 🇺🇸`, text);
+  N.setReminder(!!S.reminder, h || 19, m || 0, `Hora do ${TL().name} com ${tutorName()}! ${TL().flag}`, text);
 }
 
 // ---------- câmera ----------
@@ -191,13 +201,13 @@ function showTutor(parts, nowIdx = -1) {
   $('tutorLine').innerHTML = parts.map((p, i) => `<span class="seg ${p.lang} ${i === nowIdx ? 'now' : ''}">${esc(p.text)}</span>`).join(' ');
 }
 function showTutorText(text) {
-  $('tutorLine').innerHTML = text ? `<span class="seg en">${esc(text)}</span>` : '';
+  $('tutorLine').innerHTML = text ? `<span class="seg tg">${esc(text)}</span>` : '';
 }
 function showUser(text) { $('userLine').textContent = text ? `Você: ${text}` : ''; }
 function showRepeat(r) {
   const box = $('repeatBox');
   if (!r || !r.text) { box.classList.add('hidden'); return; }
-  $('repeatText').innerHTML = r.text.split(/\s+/).filter(Boolean).map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ');
+  $('repeatText').innerHTML = tokensOf(r.text).map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ');
   box.classList.remove('played');
   $('repeatPt').textContent = r.pt || '';
   $('score').classList.add('hidden');
@@ -250,8 +260,8 @@ function addWords(list) {
   for (const w of list || []) {
     if (!w || !w.en) continue;
     const k = String(w.en).toLowerCase().trim();
-    if (!vocab.some((v) => v.en.toLowerCase() === k)) {
-      vocab.push(srsInit({ en: String(w.en).trim(), pt: String(w.pt || '').trim(), ts: Date.now() }));
+    if (!myVocab().some((v) => v.en.toLowerCase() === k)) {
+      vocab.push(srsInit({ en: String(w.en).trim(), pt: String(w.pt || '').trim(), ts: Date.now(), lang: S.target }));
       added++;
       if (st.sess) st.sess.words.push(w);
     }
@@ -314,7 +324,7 @@ async function speakParts(parts, callId) {
       for (const w of ws) { if (callId !== st.callId) break; avatar.speakWord(w, per * 0.9); await sleep(per); }
       continue;
     }
-    const lang = p.lang === 'pt' ? 'pt-BR' : 'en-US';
+    const lang = p.lang === 'pt' ? 'pt-BR' : TL().tts;
     const rate = p.lang === 'pt' ? Math.min(1.1, S.rate + 0.1) : S.rate;
     await N.speak(p.text, lang, rate, androidVoice(), {
       onWord: (w) => avatar.speakWord(w, (90 + w.length * 62) / rate),
@@ -338,7 +348,7 @@ function startListening() {
   avatar.setMode('listening');
   const callId = st.callId;
   // pronúncia pelo som: grava o áudio quando há frase para repetir
-  const wantRepeat = st.repeat && st.expect === 'repeat' && st.lang === 'en-US';
+  const wantRepeat = st.repeat && st.expect === 'repeat' && st.lang === 'tg';
   if (wantRepeat && S.soundPron && geminiKey() && N.canRecord) {
     setStatus('ouvindo… (avaliando pelo som)');
     N.recordStart(9000, {
@@ -351,15 +361,16 @@ function startListening() {
     return;
   }
   // com "responder em português" ligado e sem frase para repetir, ouve português e inglês
-  const lang = st.lang === 'pt-BR' || st.expect === 'pt' ? 'pt-BR'
-    : wantRepeat ? 'en-US'
-      : (ptBridge() || S.meaning) ? 'auto' : 'en-US';
-  st.heardLang = lang;
-  setStatus(lang === 'pt-BR' ? 'ouvindo (português)…' : lang === 'auto' ? 'ouvindo (português ou inglês)…' : 'ouvindo…');
+  const mode = st.lang === 'pt-BR' || st.expect === 'pt' ? 'pt-BR'
+    : wantRepeat ? 'tg'
+      : (ptBridge() || S.meaning) ? 'auto' : 'tg';
+  st.heardLang = mode;
+  const lang = mode === 'tg' ? TL().stt : mode === 'auto' ? `auto:${TL().stt}` : 'pt-BR';
+  setStatus(mode === 'pt-BR' ? 'ouvindo (português)…' : mode === 'auto' ? `ouvindo (português ou ${TL().name})…` : 'ouvindo…');
   N.listen(lang, {
     onPartial: (t) => {
       showUser(t);
-      if (st.repeat && lang === 'en-US') markRepeat(liveMatch(st.repeat.text, t), false);
+      if (st.repeat && mode === 'tg') markRepeat(liveMatch(st.repeat.text, t), false);
     },
     onLevel: (v) => {
       $('btnMic').style.setProperty('--lvl', (1 + Math.min(0.35, v * 0.4)).toFixed(3));
@@ -402,7 +413,7 @@ async function onRecorded(wav) {
     const missed = r.words.filter((w) => !w.ok).map((w) => w.w.replace(/[.,!?;:]+$/, ''));
     st.repeatTries++;
     showScore({ score: r.score, missed, tip: r.tip });
-    ask('user', { text: r.heard || '(inaudível)', lang: 'en-US', repeat: target, score: r.score, missed, issue: r.issue });
+    ask('user', { text: r.heard || '(inaudível)', lang: 'tg', repeat: target, score: r.score, missed, issue: r.issue });
   } catch (e) {
     toast(e.message || String(e), 4000);
     avatar.setMode('idle');
@@ -438,9 +449,9 @@ async function ask(kind, data = {}) {
   if (same) text += '\n(A cena da câmera não mudou desde a última foto.)';
   let reply;
   try {
-    const due = dueWords(vocab).slice(0, 12);
+    const due = dueWords(myVocab()).slice(0, 12);
     const scen = st.scenario.prompt + (st.scenario.id === 'review' && due.length ? ` Words due: ${due.map((w) => `${w.en} (${w.pt})`).join(', ')}.` : '');
-    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, behavior: behavior() }), st.history.slice(-14), text, img);
+    reply = await askLLM(settingsForLLM(), systemPrompt({ level: S.level, vocab: myVocab(), correct: S.correct, tutor: tutorName(), scenario: scen, behavior: behavior() }), st.history.slice(-14), text, img);
   } catch (e) {
     st.busy = false;
     if (callId !== st.callId) return;
@@ -473,7 +484,7 @@ async function ask(kind, data = {}) {
 function onUserSpeech(text, alts) {
   showUser(text);
   const data = { text, lang: st.heardLang || st.lang, bridge: ptBridge() };
-  if (st.repeat && data.lang === 'en-US' && st.expect === 'repeat') {
+  if (st.repeat && data.lang === 'tg' && st.expect === 'repeat') {
     const res = pronunciationScore(st.repeat.text, alts);
     if (res) {
       st.repeatTries++;
@@ -494,7 +505,7 @@ async function startLive(kind) {
   N.setCallMode(S.duplex);
   N.playerOpen(24000, S.duplex, 'live');
   const callId = st.callId;
-  const due = dueWords(vocab);
+  const due = dueWords(myVocab());
   let scen = st.scenario.prompt;
   if (kind === 'review' || st.scenario.id === 'review') scen = scenarioById('review').prompt;
   let sess;
@@ -502,7 +513,7 @@ async function startLive(kind) {
     sess = await connectLive({
       key: geminiKey(),
       voice: VOICES[S.tutor],
-      system: liveSystemPrompt({ level: S.level, vocab, correct: S.correct, tutor: tutorName(), scenario: scen, due, behavior: behavior() }),
+      system: liveSystemPrompt({ level: S.level, vocab: myVocab(), correct: S.correct, tutor: tutorName(), scenario: scen, due, behavior: behavior() }),
       tools: LIVE_TOOLS,
       onAudio: (b64) => {
         if (callId !== st.callId || st.dropAudio) return;
@@ -706,7 +717,7 @@ function handleToolCalls(calls, callId) {
         const score = Math.max(0, Math.min(100, Math.round(Number(a.score) || 0)));
         if (st.repeat) {
           const bad = new Set(missed.map((w) => w.toLowerCase().replace(/[^a-z']/g, '')));
-          markRepeat(st.repeat.text.split(/\s+/).filter(Boolean).map((w) => !bad.has(w.toLowerCase().replace(/[^a-z']/g, ''))), true);
+          markRepeat(tokensOf(st.repeat.text).map((w) => !bad.has(w.toLowerCase().replace(/[^a-z']/g, ''))), true);
         }
         st.repeatTries++;
         showScore({ score, missed, tip: String(a.tip_pt || '') });
@@ -758,7 +769,7 @@ async function practiceSpeak(text, opts = {}) {
   if (!done) {
     let wi = 0;
     const rate = slow ? Math.max(0.5, S.rate - 0.3) : S.rate;
-    await N.speak(text, 'en-US', rate, androidVoice(), {
+    await N.speak(text, TL().tts, rate, androidVoice(), {
       onWord: (w) => {
         avatar.speakWord(w, (90 + w.length * 62) / rate);
         spans.forEach((el) => el.classList.remove('playing'));
@@ -823,7 +834,7 @@ function endCall() {
   document.body.classList.remove('in-call');
   ['captions', 'controls', 'callBar'].forEach((id) => $(id).classList.add('hidden'));
   showCorr(null);
-  setStatus('Professora de inglês');
+  setStatus(`Professor${PROFILES[S.tutor].gender === 'm' ? '' : 'a'} de ${TL().name}`);
   const minutes = (Date.now() - st.startedAt) / 60000;
   const t = today();
   mins[t] = (mins[t] || 0) + minutes;
@@ -853,7 +864,7 @@ function restartLesson() {
 
 function updateLangChip() {
   $('langChip').classList.toggle('hidden', st.liveMode);
-  $('langChip').innerHTML = `Você fala em: <b>${st.lang === 'en-US' ? 'Inglês' : 'Português'}</b>`;
+  $('langChip').innerHTML = `Você fala em: <b>${st.lang === 'tg' ? TL().Name : 'Português'}</b>`;
 }
 
 // ---------- relatório da aula ----------
@@ -886,8 +897,10 @@ function showReport(minutes) {
 // ---------- revisão espaçada (cartões) ----------
 let rev = { list: [], i: 0 };
 function openReview() {
-  const due = dueWords(vocab);
-  const list = due.length ? due.slice(0, 20) : vocab.slice().sort(() => Math.random() - 0.5).slice(0, 10);
+  const mv = myVocab();
+  const due = dueWords(mv);
+  const list = due.length ? due.slice(0, 20) : mv.slice().sort(() => Math.random() - 0.5).slice(0, 10);
+  document.querySelector('#flash .f-q').textContent = `Como se diz em ${TL().name}?`;
   if (!list.length) { toast('Ainda não há palavras. Elas aparecem durante as aulas.'); return; }
   rev = { list, i: 0 };
   $('review').classList.remove('hidden');
@@ -914,13 +927,13 @@ function revealCard(ok) {
   $('revAsk').classList.add('hidden');
   $('revGrades').classList.remove('hidden');
   document.querySelectorAll('#revGrades button').forEach((b) => b.style.outline = (ok === true && b.dataset.g === '2') ? '3px solid #13894c' : '');
-  sayEnglish(rev.list[rev.i].en);
+  sayTarget(rev.list[rev.i].en);
 }
-function sayEnglish(text) {
+function sayTarget(text) {
   if (naturalVoice()) {
     N.playerOpen(24000, false, 'tts');
-    playNatural(text, false, null).catch(() => N.speak(text, 'en-US', S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) }));
-  } else N.speak(text, 'en-US', S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) });
+    playNatural(text, false, null).catch(() => N.speak(text, TL().tts, S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) }));
+  } else N.speak(text, TL().tts, S.rate, androidVoice(), { onWord: (x) => avatar.speakWord(x, 90 + x.length * 70) });
 }
 
 // ---------- configurações ----------
@@ -953,16 +966,19 @@ function openSettings() {
   $('testResult').textContent = '';
   $('btnResetAll').textContent = 'Apagar progresso';
   const sel = $('setVoice');
-  const voices = N.listVoices().filter((v) => /^en/i.test(v.lang));
+  const voices = N.listVoices().filter((v) => String(v.lang).toLowerCase().startsWith(TL().id));
   sel.innerHTML = '<option value="">Automática</option>' + voices.map((v) => `<option value="${esc(v.name)}">${esc(prettyVoice(v))}</option>`).join('');
-  sel.value = S.voice || '';
+  sel.value = S.voiceLang === S.target ? (S.voice || '') : '';
+  $('setTarget').value = S.target;
+  segSet('setExplain', S.explain);
+  $('voiceLbl').textContent = `Voz do Android em ${TL().name}`;
   const m = usage[monthKey()] || { in: 0, out: 0 };
   $('usageBox').innerHTML = `Uso este mês: <b>${costText(m.in + m.out)}</b><br><small>A professora só manda foto quando a cena muda, para economizar.</small>`;
   $('ver').textContent = `Versão ${N.appVersion()}`;
   $('settings').classList.remove('hidden');
 }
 function prettyVoice(v) {
-  const region = { 'en-US': 'EUA', 'en-GB': 'Reino Unido', 'en-AU': 'Austrália', 'en-IN': 'Índia', 'en-CA': 'Canadá' }[String(v.lang).replace('_', '-')] || v.lang;
+  const region = String(v.lang).replace('_', '-');
   return `${v.name} (${region}${v.local === false ? ', online' : ''})`;
 }
 let pendingProvider = null;
@@ -992,6 +1008,9 @@ function readSettingsForm() {
   s.rate = Number($('setRate').value);
   s.boost = Number($('setBoost').value);
   s.voice = $('setVoice').value;
+  s.voiceLang = s.voice ? S.target : '';
+  s.target = $('setTarget').value || 'en';
+  s.explain = segGet('setExplain', 'pt');
   s.autoLook = Number($('setAutoLook').value);
   s.handsFree = $('setHandsFree').checked;
   s.camDefault = $('setCamDefault').checked;
@@ -1010,12 +1029,13 @@ function boostLabel(v) { v = Number(v); return v <= 0 ? 'normal' : v <= 6 ? `+${
 // ---------- vocabulário ----------
 function openVocab() {
   const ul = $('vocabList');
-  const due = dueWords(vocab).length;
+  const mv = myVocab();
+  const due = dueWords(mv).length;
   $('btnReviewFromList').textContent = due ? `🔁 Revisar agora (${due} para hoje)` : '🔁 Treinar palavras';
-  $('btnReviewFromList').classList.toggle('hidden', !vocab.length);
-  if (!vocab.length) ul.innerHTML = '<li class="empty">Ainda não há palavras. Elas aparecem aqui durante as aulas.</li>';
+  $('btnReviewFromList').classList.toggle('hidden', !mv.length);
+  if (!mv.length) ul.innerHTML = `<li class="empty">Ainda não há palavras de ${TL().name}. Elas aparecem aqui durante as aulas.</li>`;
   else {
-    ul.innerHTML = vocab.slice().reverse().map((w, i) => `<li data-i="${vocab.length - 1 - i}"><div class="w"><b>${esc(w.en)}<span class="box">${boxLabel(w.box)}</span></b><span>${esc(w.pt)}</span></div><button class="say" aria-label="ouvir">🔊</button><button class="del" aria-label="apagar">🗑</button></li>`).join('');
+    ul.innerHTML = vocab.map((w, i) => [w, i]).filter(([w]) => (w.lang || 'en') === S.target).reverse().map(([w, i]) => `<li data-i="${i}"><div class="w"><b>${esc(w.en)}<span class="box">${boxLabel(w.box)}</span></b><span>${esc(w.pt)}</span></div><button class="say" aria-label="ouvir">🔊</button><button class="del" aria-label="apagar">🗑</button></li>`).join('');
   }
   $('vocab').classList.remove('hidden');
 }
@@ -1048,7 +1068,17 @@ $('scenList').onclick = (e) => {
   renderHome();
 };
 $('qCurious').onclick = () => { S.curious = !S.curious; store.set('settings', S); renderHome(); toast(S.curious ? 'Professora curiosa: ela vai perguntar o que você está fazendo 🧐' : 'Professora curiosa desligada', 2200); };
-$('qPt').onclick = () => { S.ptBridge = !S.ptBridge; store.set('settings', S); renderHome(); toast(S.ptBridge ? 'Pode responder em português: ela te ensina a dizer em inglês 🇧🇷➜🇺🇸' : 'Respostas só em inglês', 2400); };
+$('qPt').onclick = () => { S.ptBridge = !S.ptBridge; store.set('settings', S); renderHome(); toast(S.ptBridge ? `Pode responder em português: ela te ensina a dizer em ${TL().name} 🇧🇷➜${TL().flag}` : `Respostas só em ${TL().name}`, 2400); };
+$('homeTarget').onchange = () => {
+  S.target = $('homeTarget').value; store.set('settings', S);
+  setLanguage(S.target, S.explain); ttsCache.clear(); renderHome();
+  toast(`Agora você vai aprender ${TL().name} ${TL().flag}`, 2000);
+};
+$('homeExplain').onchange = () => {
+  S.explain = $('homeExplain').value; store.set('settings', S);
+  setLanguage(S.target, S.explain); renderHome();
+  toast({ pt: 'Ela vai explicar tudo em português 🇧🇷', mix: 'Ela vai misturar os dois idiomas', target: `Imersão: ela vai falar só em ${TL().name}` }[S.explain], 2200);
+};
 $('qMeaning').onclick = () => { S.meaning = !S.meaning; store.set('settings', S); renderHome(); toast(S.meaning ? 'Ela vai traduzir cada frase e perguntar o significado até você acertar 📖' : 'Checagem de significado desligada', 2600); };
 $('tutorPick').onclick = (e) => {
   const b = e.target.closest('button[data-t]');
@@ -1108,9 +1138,9 @@ $('btnSpeaker').onclick = () => {
 $('btnCam').onclick = () => { if (st.camOn) camStop(); else camStart(); };
 $('pip').onclick = () => { st.facing = st.facing === 'user' ? 'environment' : 'user'; camStart(); };
 $('langChip').onclick = () => {
-  st.lang = st.lang === 'en-US' ? 'pt-BR' : 'en-US';
+  st.lang = st.lang === 'tg' ? 'pt-BR' : 'tg';
   updateLangChip();
-  toast(st.lang === 'en-US' ? 'Agora fale em inglês' : 'Agora pode falar em português (para tirar dúvidas)', 1800);
+  toast(st.lang === 'tg' ? `Agora fale em ${TL().name}` : 'Agora pode falar em português (para tirar dúvidas)', 1800);
   if (st.listening) startListening();
 };
 document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => $(b.dataset.close).classList.add('hidden'); });
@@ -1126,13 +1156,13 @@ $('setBoost').oninput = () => { $('boostVal').textContent = boostLabel($('setBoo
 $('btnTestVoice').onclick = () => {
   N.ensureAudible();
   const s = readSettingsForm();
-  const txt = 'Hello! This is my voice. Can you hear me well?';
+  const txt = langOf(s.target).sample;
   if (s.voiceMode === 'natural' && s.keys.gemini) {
     N.playerOpen(24000, false, 'tts');
     playNatural(txt, false, null).catch((e) => toast(e.message || String(e)));
-  } else N.speak(txt, 'en-US', s.rate, s.voice || androidVoice(), { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) });
+  } else N.speak(txt, langOf(s.target).tts, s.rate, s.voice || androidVoice(), { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) });
 };
-['setLevel', 'setCorrect', 'setMode', 'setVoiceMode', 'setQuality'].forEach((id) => {
+['setLevel', 'setCorrect', 'setMode', 'setVoiceMode', 'setQuality', 'setExplain'].forEach((id) => {
   document.querySelectorAll(`#${id} button`).forEach((b) => {
     b.onclick = () => document.querySelectorAll(`#${id} button`).forEach((x) => x.classList.toggle('on', x === b));
   });
@@ -1153,8 +1183,11 @@ $('btnResetAll').onclick = () => {
 };
 $('btnSave').onclick = () => {
   const oldQ = S.quality;
+  const oldTarget = S.target;
   S = readSettingsForm();
   store.set('settings', S);
+  setLanguage(S.target, S.explain);
+  if (oldTarget !== S.target) ttsCache.clear();
   N.setBoost(S.boost);
   if (oldQ !== S.quality) avatar.setQuality(S.quality);
   $('settings').classList.add('hidden');
@@ -1175,7 +1208,7 @@ $('vocabList').onclick = (e) => {
   const li = e.target.closest('li[data-i]');
   if (!li) return;
   const w = vocab[Number(li.dataset.i)];
-  if (e.target.classList.contains('say')) sayEnglish(w.en);
+  if (e.target.classList.contains('say')) sayTarget(w.en);
   else if (e.target.classList.contains('del')) {
     vocab.splice(Number(li.dataset.i), 1);
     store.set('vocab', vocab);
@@ -1191,21 +1224,21 @@ $('repeatBox').onclick = (e) => {
 };
 $('corrBox').onclick = () => { if (st.corr) practiceSpeak(st.corr.correct); };
 $('tutorLine').onclick = (e) => {
-  const seg = e.target.closest('.seg.en');
+  const seg = e.target.closest('.seg.tg');
   if (seg) practiceSpeak(seg.textContent.slice(-160));
 };
 $('reportBody').onclick = (e) => {
   const g = e.target.closest('[data-say]');
-  if (g) sayEnglish(g.dataset.say);
+  if (g) sayTarget(g.dataset.say);
 };
 // revisão
 $('btnRevShow').onclick = () => revealCard(false);
-$('fEn').onclick = () => sayEnglish(rev.list[rev.i].en);
+$('fEn').onclick = () => sayTarget(rev.list[rev.i].en);
 $('btnRevSpeak').onclick = () => {
   const w = rev.list[rev.i];
   if (!w) return;
   $('fHeard').textContent = '🎤 ouvindo…';
-  N.listen('en-US', {
+  N.listen(TL().stt, {
     onPartial: (t) => { $('fHeard').textContent = t; },
     onResult: (alts) => {
       const ok = alts.some((a) => liveMatch(w.en, a).every(Boolean));

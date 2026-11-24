@@ -4,11 +4,11 @@ export const SCENARIOS = [
   { id: 'daily', emoji: '📷', title: 'Meu dia a dia', desc: 'Ela vê o que você faz e ensina', cam: 'user',
     prompt: 'DAY-TO-DAY: teach from what the student is doing right now on the camera (actions, objects, routine). Make it feel like a friendly call.' },
   { id: 'curious', emoji: '🧐', title: 'Ela pergunta, eu respondo', desc: 'Pergunta o que você faz; responda até em português', cam: 'user', curious: true, ptBridge: true,
-    prompt: 'CURIOUS CONVERSATION: you lead the conversation by asking the student about what they are doing and what you see on the camera. The student can answer in Portuguese or English; whenever they answer in Portuguese, teach them how to say it in English and have them repeat it.' },
+    prompt: 'CURIOUS CONVERSATION: you lead the conversation by asking the student about what they are doing and what you see on the camera. The student can answer in Portuguese or in the language being learned; whenever they answer in Portuguese, teach them how to say it in the language being learned and have them repeat it.' },
   { id: 'explore', emoji: '🔎', title: 'Explorar a casa', desc: 'Aponte a câmera para objetos', cam: 'environment', autoLook: 20,
-    prompt: 'EXPLORE MODE: the student points the BACK camera at objects around the house. Each time you see a new main object, say its English name slowly, its Portuguese translation, and one short useful sentence with it for the student to repeat. Then ask them to show you another object. Keep a fast, playful rhythm, like a game.' },
+    prompt: 'EXPLORE MODE: the student points the BACK camera at objects around the house. Each time you see a new main object, say its name slowly in the language being learned, its Portuguese translation, and one short useful sentence with it for the student to repeat. Then ask them to show you another object. Keep a fast, playful rhythm, like a game.' },
   { id: 'restaurant', emoji: '🍽️', title: 'Restaurante', desc: 'Pedir comida, conta, alergias',
-    prompt: 'ROLE-PLAY: you are a friendly waiter/waitress in a restaurant in New York and the student is the customer. Practice greeting, ordering food and drinks, special requests, allergies, asking for the check and tipping. Stay in character, but step out briefly to correct mistakes.' },
+    prompt: 'ROLE-PLAY: you are a friendly waiter/waitress in a restaurant in a country where the language being learned is spoken and the student is the customer. Practice greeting, ordering food and drinks, special requests, allergies, asking for the check and tipping. Stay in character, but step out briefly to correct mistakes.' },
   { id: 'travel', emoji: '✈️', title: 'Viagem e aeroporto', desc: 'Check-in, imigração, hotel',
     prompt: 'ROLE-PLAY: airport check-in agent, then immigration officer, then hotel receptionist. Ask the typical questions one at a time and help the student answer naturally.' },
   { id: 'job', emoji: '💼', title: 'Entrevista de emprego', desc: 'Perguntas e boas respostas',
@@ -22,7 +22,7 @@ export const SCENARIOS = [
   { id: 'directions', emoji: '🗺️', title: 'Pedir informações', desc: 'Direções e transporte',
     prompt: 'ROLE-PLAY: a local person in a big city. Practice asking for and giving directions, public transport, tickets, landmarks.' },
   { id: 'review', emoji: '🔁', title: 'Revisar com a professora', desc: 'Usa suas palavras salvas',
-    prompt: 'REVIEW LESSON: review the student\'s words that are due for review, one by one: say the Portuguese meaning, ask the student to say the English word and then use it in a short sentence. Praise and correct.' },
+    prompt: 'REVIEW LESSON: review the student\'s words that are due for review, one by one: say the Portuguese meaning, ask the student to say the word in the language being learned and then use it in a short sentence. Praise and correct.' },
 ];
 
 export const scenarioById = (id) => SCENARIOS.find((s) => s.id === id) || SCENARIOS[0];

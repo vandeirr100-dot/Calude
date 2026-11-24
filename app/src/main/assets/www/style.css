@@ -50,7 +50,7 @@ svg { width: 100%; height: 100%; }
 #captions { position: fixed; left: 12px; right: 12px; bottom: calc(var(--safe-bot) + 168px); z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 #tutorLine { max-width: 100%; font-size: 17px; line-height: 1.35; text-align: center; padding: 8px 12px; border-radius: 14px; background: rgba(20,10,6,.55); backdrop-filter: blur(6px); }
 #tutorLine:empty, #userLine:empty { display: none; }
-#tutorLine .en { font-weight: 650; }
+#tutorLine .tg { font-weight: 650; }
 #tutorLine .pt { opacity: .82; font-style: italic; }
 #tutorLine .seg.now { text-decoration: underline; text-decoration-color: rgba(255,214,120,.8); text-underline-offset: 4px; }
 #userLine { font-size: 15px; padding: 6px 12px; border-radius: 12px; background: rgba(124,92,255,.55); max-width: 92%; text-align: center; }
@@ -136,8 +136,8 @@ body.in-call #home { display: none; }
 .rep-tip { font-size: 11px; color: #9a8a80; margin-top: 4px; }
 #repeatBox.played .rep-tip { display: none; }
 #tutorLine { pointer-events: auto; }
-#tutorLine .seg.en { cursor: pointer; }
-#tutorLine .seg.en:active { background: rgba(255,255,255,.15); border-radius: 6px; }
+#tutorLine .seg.tg { cursor: pointer; }
+#tutorLine .seg.tg:active { background: rgba(255,255,255,.15); border-radius: 6px; }
 #corrBox { pointer-events: auto; background: #fff; color: var(--ink); border-radius: 16px; padding: 8px 14px; box-shadow: 0 6px 20px rgba(0,0,0,.35); max-width: 100%; border-left: 6px solid #e5574f; animation: pop .25s ease-out; }
 #corrBox .c-row { display: flex; gap: 8px; align-items: baseline; font-size: 17px; line-height: 1.3; }
 #corrBox .c-wrong { color: #b3261e; }
@@ -206,3 +206,7 @@ body.live #liveBadge { display: inline-block; }
 .qt.on { background: #efe9ff; }
 .qt.on .sw { background: var(--accent); }
 .qt.on .sw::after { left: 12px; }
+
+.langrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.langrow label { display: block; font-size: 12px; font-weight: 700; color: #7a6a60; }
+.langrow select { width: 100%; margin-top: 3px; font: inherit; font-size: 15px; font-weight: 700; padding: 9px 8px; border-radius: 12px; border: 1.5px solid #e0d2c6; background: #fff; color: var(--ink); }

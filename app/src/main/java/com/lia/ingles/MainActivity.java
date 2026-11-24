@@ -416,14 +416,18 @@ public class MainActivity extends Activity {
     }
 
     private Intent recognizerIntent(String lang) {
-        boolean auto = "auto".equals(lang);
-        if (auto) lang = "pt-BR";
+        boolean auto = lang != null && lang.startsWith("auto");
+        String other = "en-US";
+        if (auto) {
+            if (lang.startsWith("auto:") && lang.length() > 5) other = lang.substring(5);
+            lang = "pt-BR";
+        }
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         if (auto) {
             // Android 14+: detecta automaticamente português ou inglês
             ArrayList<String> langs = new ArrayList<>();
             langs.add("pt-BR");
-            langs.add("en-US");
+            langs.add(other);
             i.putExtra("android.speech.extra.ENABLE_LANGUAGE_DETECTION", true);
             i.putStringArrayListExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", langs);
             i.putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", "balanced");
@@ -538,9 +542,12 @@ public class MainActivity extends Activity {
         public void speak(final String id, final String text, final String lang, final float rate, final String voiceName) {
             main.post(() -> {
                 if (!ttsReady) { ttsEvent("error", id, 0, 0); return; }
-                Locale loc = lang != null && lang.toLowerCase(Locale.ROOT).startsWith("pt") ? new Locale("pt", "BR") : Locale.US;
+                Locale loc = lang == null || lang.isEmpty() ? Locale.US
+                        : lang.toLowerCase(Locale.ROOT).startsWith("pt") ? new Locale("pt", "BR")
+                        : Locale.forLanguageTag(lang);
                 String vn = voiceName == null ? "" : voiceName;
-                Voice v = pickVoice(loc, loc.getLanguage().equals("en") || vn.startsWith("auto:") ? vn : "");
+                // a voz escolhida vale para o idioma estudado; em português usa só a automática (feminina/masculina)
+                Voice v = pickVoice(loc, !loc.getLanguage().equals("pt") || vn.startsWith("auto:") ? vn : "");
                 if (v != null) tts.setVoice(v); else tts.setLanguage(loc);
                 tts.setSpeechRate(rate <= 0 ? 1f : rate);
                 tts.setPitch(1.05f);
@@ -689,7 +696,7 @@ public class MainActivity extends Activity {
                 if (ttsReady && tts.getVoices() != null) {
                     for (Voice v : tts.getVoices()) {
                         Locale l = v.getLocale();
-                        if (l == null || !(l.getLanguage().equals("en") || l.getLanguage().equals("pt"))) continue;
+                        if (l == null) continue;
                         Set<String> feats = v.getFeatures();
                         if (feats != null && feats.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
                         JSONObject o = new JSONObject();

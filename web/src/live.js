@@ -8,11 +8,11 @@ export const LIVE_MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview', 
 export const LIVE_TOOLS = [
   {
     name: 'show_phrase',
-    description: 'Show on the student\'s screen the English sentence they must say/repeat now, with its Brazilian Portuguese translation. Call it every time you ask the student to repeat something.',
+    description: 'Show on the student\'s screen the sentence (in the language being learned) they must say/repeat now, with its Brazilian Portuguese translation. Call it every time you ask the student to repeat something.',
     parameters: {
       type: 'object',
       properties: {
-        phrase: { type: 'string', description: 'English sentence to repeat' },
+        phrase: { type: 'string', description: 'Sentence to repeat, in the language being learned (for Japanese/Chinese/Korean add romanization in parentheses for beginners)' },
         translation_pt: { type: 'string', description: 'Portuguese translation' },
       },
       required: ['phrase'],
@@ -25,7 +25,7 @@ export const LIVE_TOOLS = [
       type: 'object',
       properties: {
         said: { type: 'string', description: 'What the student said (as you heard it)' },
-        correct: { type: 'string', description: 'The correct English sentence' },
+        correct: { type: 'string', description: 'The correct sentence in the language being learned' },
         explanation_pt: { type: 'string', description: 'Very short reason in Portuguese (max 12 words)' },
       },
       required: ['correct'],
@@ -33,7 +33,7 @@ export const LIVE_TOOLS = [
   },
   {
     name: 'save_words',
-    description: 'Save useful new English words or expressions the student just learned (max 3 per call).',
+    description: 'Save useful new words or expressions (in the language being learned) the student just learned (max 3 per call).',
     parameters: {
       type: 'object',
       properties: {
@@ -41,8 +41,8 @@ export const LIVE_TOOLS = [
           type: 'array',
           items: {
             type: 'object',
-            properties: { en: { type: 'string' }, pt: { type: 'string' } },
-            required: ['en', 'pt'],
+            properties: { word: { type: 'string', description: 'word/expression in the language being learned' }, pt: { type: 'string', description: 'Portuguese translation' } },
+            required: ['word', 'pt'],
           },
         },
       },
