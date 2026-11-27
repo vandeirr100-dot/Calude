@@ -401,7 +401,7 @@ public class AudioEngine {
                     }
                     if (recStopNow) break;
                     if (!speech && el > 7000) break;
-                    if (speech && now - lastVoice > 1100) break;
+                    if (speech && now - lastVoice > 700) break;
                     if (el > maxMs) break;
                 }
                 rec.stop();

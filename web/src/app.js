@@ -24,7 +24,7 @@ const DEFAULTS = {
   provider: 'gemini', keys: {}, models: {}, level: 'iniciante', rate: 0.9, voice: '', autoLook: 60,
   handsFree: true, camDefault: true, correct: 'realtime', boost: 6,
   mode: 'live', duplex: false, liveModel: LIVE_MODELS[0], soundPron: true, voiceMode: 'natural',
-  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, meaning: true, curiousEvery: 25, target: 'en', explain: 'pt', voiceLang: '', goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
+  tutor: 'lia', scenario: 'daily', curious: true, ptBridge: true, meaning: true, curiousEvery: 25, target: 'en', explain: 'pt', voiceLang: '', judge: 'fast', beep: true, goal: 60, reminder: false, reminderTime: '19:00', price: '', quality: 'high',
 };
 let S = { ...DEFAULTS, ...store.get('settings', {}) };
 // versões antigas forçavam volume alto: volta para um reforço moderado uma única vez
@@ -247,7 +247,27 @@ function showCorr(c) {
   st.corr = c;
   if (st.sess) st.sess.corrections.push(c);
 }
+let beepCtx = null;
+function beep(ok) {
+  if (!S.beep) return;
+  try {
+    beepCtx = beepCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const t = beepCtx.currentTime;
+    const notes = ok ? [880, 1320] : [330, 262];
+    notes.forEach((f, i) => {
+      const o = beepCtx.createOscillator(), g = beepCtx.createGain();
+      o.type = ok ? 'sine' : 'triangle';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.16);
+      o.connect(g).connect(beepCtx.destination);
+      o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.18);
+    });
+  } catch { /* sem som */ }
+}
 function showScore(res) {
+  beep(res.score >= PASS_SCORE);
   const el = $('score');
   el.className = res.score >= 80 ? 'good' : res.score >= 50 ? 'mid' : 'bad';
   const emoji = res.score >= 80 ? '🎉' : res.score >= 50 ? '👍' : '🔁';
@@ -417,11 +437,11 @@ async function onRecorded(wav) {
   stopListeningUi();
   st.silences = 0;
   st.lastActivity = Date.now();
-  setStatus('avaliando sua pronúncia…');
+  setStatus('⏱️ conferindo sua pronúncia…');
   avatar.setMode('thinking');
   const target = st.repeat.text;
   try {
-    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, wav, target, S.level);
+    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, wav, target, S.level, S.judge !== 'precise');
     addUsage(r.usage);
     showUser(r.heard || '…');
     if (!r.isAttempt) { ask('user', { text: r.heard || '(inaudível)', lang: 'auto', bridge: ptBridge() }); return; }
@@ -664,7 +684,7 @@ function captureChunk(b64, lvl) {
   }
   c.chunks.push(b64);
   if (lvl < thr) c.silent++; else c.silent = 0;
-  if (c.silent >= 8 || c.chunks.length >= 100) { const chunks = c.chunks; st.cap = null; judgeLiveAttempt(chunks); }
+  if (c.silent >= 6 || c.chunks.length >= 100) { const chunks = c.chunks; st.cap = null; judgeLiveAttempt(chunks); }
 }
 
 function pcmChunksToWavB64(chunks) {
@@ -689,10 +709,10 @@ async function judgeLiveAttempt(chunks) {
   const callId = st.callId;
   const target = st.repeat.text;
   st.judging = true;
-  setStatus('avaliando sua pronúncia…');
+  setStatus('⏱️ conferindo sua pronúncia…');
   avatar.setMode('thinking');
   try {
-    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, pcmChunksToWavB64(chunks), target, S.level);
+    const r = await assessPronunciation({ key: geminiKey(), model: S.models.gemini || PROVIDERS.gemini.model }, pcmChunksToWavB64(chunks), target, S.level, S.judge !== 'precise');
     if (callId !== st.callId || !st.live) return;
     addUsage(r.usage);
     showUser(r.heard || '…');
@@ -976,6 +996,8 @@ function openSettings() {
   $('setDuplex').checked = S.duplex;
   $('setLiveModel').value = S.liveModel || LIVE_MODELS[0];
   $('setSoundPron').checked = S.soundPron;
+  segSet('setJudge', S.judge || 'fast');
+  $('setBeep').checked = S.beep;
   $('setRate').value = S.rate; $('rateVal').textContent = S.rate;
   $('setBoost').value = S.boost; $('boostVal').textContent = boostLabel(S.boost);
   $('setAutoLook').value = String(S.autoLook);
@@ -1031,6 +1053,8 @@ function readSettingsForm() {
   s.duplex = $('setDuplex').checked;
   s.liveModel = $('setLiveModel').value.trim() || LIVE_MODELS[0];
   s.soundPron = $('setSoundPron').checked;
+  s.judge = segGet('setJudge', 'fast');
+  s.beep = $('setBeep').checked;
   s.rate = Number($('setRate').value);
   s.boost = Number($('setBoost').value);
   s.voice = $('setVoice').value;
@@ -1188,7 +1212,7 @@ $('btnTestVoice').onclick = () => {
     playNatural(txt, false, null).catch((e) => toast(e.message || String(e)));
   } else N.speak(txt, langOf(s.target).tts, s.rate, s.voice || androidVoice(), { onWord: (w) => avatar.speakWord(w, 90 + w.length * 62) });
 };
-['setLevel', 'setCorrect', 'setMode', 'setVoiceMode', 'setQuality', 'setExplain'].forEach((id) => {
+['setLevel', 'setCorrect', 'setMode', 'setVoiceMode', 'setQuality', 'setExplain', 'setJudge'].forEach((id) => {
   document.querySelectorAll(`#${id} button`).forEach((b) => {
     b.onclick = () => document.querySelectorAll(`#${id} button`).forEach((x) => x.classList.toggle('on', x === b));
   });

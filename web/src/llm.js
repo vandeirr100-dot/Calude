@@ -421,8 +421,11 @@ export async function ttsGemini(key, text, voice, slow = false) {
 }
 
 // ================= pronúncia avaliada pelo som =================
-export async function assessPronunciation(settings, wavB64, target, level) {
-  const model = settings.model || PROVIDERS.gemini.model;
+// modelo rápido para conferir a pronúncia (cai para o modelo normal se não existir)
+export const FAST_JUDGE = 'gemini-3.5-flash-lite';
+let judgeFallback = false;
+export async function assessPronunciation(settings, wavB64, target, level, fast = true) {
+  const model = fast && !judgeFallback ? FAST_JUDGE : (settings.model || PROVIDERS.gemini.model);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const prompt = `You are a STRICT {{L}} pronunciation examiner for Brazilian learners (level: ${level}).
 The audio is a Brazilian student who was asked to say exactly: "${target}".
@@ -430,12 +433,28 @@ Listen to the ACTUAL SOUNDS, phoneme by phoneme. Do NOT be generous: being under
 Errors you MUST catch and penalize: {{TIPS}} Also missing or extra words.
 Rules: any wrong sound (or wrong tone, for tonal languages) in a word marks that word as not ok. One clearly wrong sound => score at most 80. Two or more wrong sounds or a missing word => at most 65. Different sentence or mostly unclear => at most 40. Only give 90+ if EVERY sound is correct and clear.
 If the student did not try to say the sentence at all (silence, said something else, spoke Portuguese), set "is_attempt": false.
-Reply ONLY with JSON:
+Reply ONLY with compact JSON (no extra text):
 {"is_attempt":true,"heard":"what the student actually said, as you heard it","score":0,"words":[{"w":"each word of the target sentence in order (for Japanese/Chinese: each character)","ok":true}],"issue_pt":"the exact wrong sound(s), in Portuguese (e.g. 'o TH de think saiu como F')","tip_pt":"one short practical tip in Portuguese on how to place tongue/lips (or short praise if perfect)"}`;
-  const res = await httpPost(url, { 'Content-Type': 'application/json', 'x-goog-api-key': settings.key }, {
+  const base = {
     contents: [{ role: 'user', parts: [{ inline_data: { mime_type: 'audio/wav', data: wavB64 } }, { text: fill(prompt) }] }],
-    generationConfig: { temperature: 0, maxOutputTokens: 800, responseMimeType: 'application/json' },
-  });
+    generationConfig: { temperature: 0, maxOutputTokens: 500, responseMimeType: 'application/json' },
+  };
+  const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': settings.key };
+  // pensar o mínimo possível = resposta mais rápida
+  const levels = ['minimal', 'low', null];
+  let li = thinkIdx['j:' + model] || 0;
+  let res;
+  for (;;) {
+    const body = JSON.parse(JSON.stringify(base));
+    if (levels[li]) body.generationConfig.thinkingConfig = { thinkingLevel: levels[li] };
+    res = await httpPost(url, headers, body, 20000);
+    if (res.status === 400 && /thinking/i.test(res.text) && li < levels.length - 1) { li++; thinkIdx['j:' + model] = li; continue; }
+    break;
+  }
+  if (model === FAST_JUDGE && (res.status === 404 || (res.status === 400 && /model|not found|not supported/i.test(res.text)))) {
+    judgeFallback = true;
+    return assessPronunciation(settings, wavB64, target, level, false);
+  }
   if (res.status !== 200) throw new Error(errorMessage(res.status, res.text));
   const j = JSON.parse(res.text);
   const cand = j.candidates && j.candidates[0];
